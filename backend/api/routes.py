@@ -26,6 +26,7 @@ from backend.services.case_store import default_case_repo
 
 from backend.data.demo_emails import DEMO_EMAILS
 from backend.data.eml_samples import EML_SAMPLES
+from backend.core.config import MAX_UPLOAD_SIZE_BYTES, ALLOWED_UPLOAD_EXTENSIONS
 
 router = APIRouter()
 
@@ -104,10 +105,27 @@ async def analyze_forensics_endpoint(payload: RawEmlInput) -> ForensicEvidenceRe
     description="Accepts a raw .eml file upload and performs in-memory RFC 822 forensic parsing."
 )
 async def upload_forensics_endpoint(file: UploadFile = File(...)) -> ForensicEvidenceResult:
-    """Handles raw .eml file upload and returns forensic analysis."""
+    """Handles raw .eml file upload with size boundaries and extension validation."""
+    if not file.filename or not any(file.filename.lower().endswith(ext) for ext in ALLOWED_UPLOAD_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file format: upload must have an allowed extension ({', '.join(ALLOWED_UPLOAD_EXTENSIONS)})."
+        )
+
     try:
         content_bytes = await file.read()
+        if len(content_bytes) > MAX_UPLOAD_SIZE_BYTES:
+            max_mb = MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload Too Large: email upload exceeds maximum limit of {max_mb} MB."
+            )
+        if len(content_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
         return analyze_email_forensics(content_bytes)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload forensic analysis failed: {str(e)}")
 
@@ -165,6 +183,8 @@ async def analyze_intelligence_endpoint(payload: ThreatIntelligenceInput) -> Thr
             raise HTTPException(status_code=400, detail="Must provide either 'raw_eml' or 'indicators'")
 
         return await default_intel_service.enrich_iocs(iocs)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Threat intelligence query failed: {str(e)}")
 
@@ -285,10 +305,19 @@ async def analyze_complete_eml_endpoint(payload: RawEmlInput) -> Dict[str, Any]:
         explanation = generate_explanation(threat_result, email_data)
 
         # 5. Campaign Correlation & Indexing
+        recipient_addr = forensics.headers.get("To") or forensics.headers.get("to")
+        if not recipient_addr and hasattr(email_data, "recipient") and email_data.recipient:
+            recipient_addr = email_data.recipient
+        if recipient_addr and "<" in str(recipient_addr) and ">" in str(recipient_addr):
+            recipient_addr = str(recipient_addr).split("<")[1].split(">")[0].strip()
+        elif recipient_addr:
+            recipient_addr = str(recipient_addr).strip()
+
         case_record = CaseRecord(
             case_id=case_id,
             subject=forensics.subject or "Untitled Email",
             sender=forensics.sender_identity.from_address or "Unknown",
+            recipient=recipient_addr,
             threat_score=threat_result.threat_score,
             risk_level=threat_result.risk_level,
             primary_threat=threat_result.primary_threat,
@@ -326,7 +355,8 @@ async def analyze_complete_eml_endpoint(payload: RawEmlInput) -> Dict[str, Any]:
             "attack_graph": attack_graph,
             "campaign_correlation": campaign_result,
             "threat_analysis": threat_result,
-            "explanation": explanation
+            "explanation": explanation,
+            "graphops_bridge_url": f"/api/v1/graphops/bridge/case/{case_id}",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Complete EML analysis failed: {str(e)}")

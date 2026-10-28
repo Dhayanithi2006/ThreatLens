@@ -195,11 +195,70 @@ class AccessAnomalyDetector:
                 dept = "Infrastructure"
             return HistoryCompleteness.INCOMPLETE, BaselineConfidence.LOW, dept
 
+    def _create_finding(
+        self,
+        step: AccessSequenceStep,
+        deviation_type: DeviationType,
+        rule_id: str,
+        baseline_ref: str,
+        explanation: str,
+        detection_rationale: str,
+        recommended_investigation: str,
+        step_score: int,
+        affected_entity: Optional[str] = None,
+        sequence_id: Optional[str] = None,
+    ) -> UnexpectedRelationship:
+        """Constructs an explainable, structured UnexpectedRelationship finding."""
+        s = step.source_id.lower().strip()
+        t = step.target_id.lower().strip()
+
+        if step_score >= 80:
+            severity = "CRITICAL"
+        elif step_score >= 60:
+            severity = "HIGH"
+        elif step_score >= 40:
+            severity = "MEDIUM"
+        else:
+            severity = "LOW"
+
+        src_meta = self._node_metadata.get(s, {})
+        tgt_meta = self._node_metadata.get(t, {})
+        graph_context = {
+            "source_id": step.source_id,
+            "source_label": src_meta.get("label", NodeLabel.USER).value if hasattr(src_meta.get("label"), "value") else str(src_meta.get("label", "")),
+            "target_id": step.target_id,
+            "target_label": tgt_meta.get("label", NodeLabel.SERVER).value if hasattr(tgt_meta.get("label"), "value") else str(tgt_meta.get("label", "")),
+        }
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        seq_str = sequence_id or f"step-{step.step_index}"
+
+        return UnexpectedRelationship(
+            finding_id=f"ANOM-{rule_id}-{step.step_index:02d}",
+            rule_id=rule_id,
+            severity=severity,
+            affected_entity=affected_entity or step.target_id,
+            step_index=step.step_index,
+            source_id=step.source_id,
+            relationship_type=step.relationship_type,
+            target_id=step.target_id,
+            deviation_type=deviation_type,
+            baseline_reference=baseline_ref,
+            explanation=explanation,
+            detection_rationale=detection_rationale,
+            recommended_investigation=recommended_investigation,
+            timestamp=now_iso,
+            supporting_event_sequence=seq_str,
+            relevant_graph_context=graph_context,
+            step_score=step_score,
+        )
+
     def evaluate_step(
         self,
         step: AccessSequenceStep,
         evaluated_dept: str,
         is_compromised_origin: bool = False,
+        sequence_id: Optional[str] = None,
     ) -> Optional[UnexpectedRelationship]:
         """
         Evaluates a single traversal step against documented baseline policies.
@@ -214,15 +273,16 @@ class AccessAnomalyDetector:
         # 1. Exploit Precondition (CVE / Unauthorized Injection) - Evaluated FIRST
         if rtype == RelationshipType.POTENTIAL_EXPLOIT or "via_cve" in props:
             cve = props.get("via_cve", "CVE-2024-21413")
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.EXPLOIT_PRECONDITION,
-                baseline_reference=f"EXPLOIT_PRECONDITION_POLICY: Traversal leverages vulnerability ({cve})",
+                rule_id="RULE-EXPLOIT-PRECONDITION-01",
+                baseline_ref=f"EXPLOIT_PRECONDITION_POLICY: Traversal leverages vulnerability ({cve})",
                 explanation=f"Traversed via unpatched exploit precondition ({cve}) to bypass authentication controls.",
+                detection_rationale=f"Observed edge specifies exploit precondition {cve} against {step.target_id}.",
+                recommended_investigation=f"Inspect EDR telemetry and patch management logs for {step.target_id}.",
                 step_score=90,
+                sequence_id=sequence_id,
             )
 
         # 2. Exact match in historical baseline (for non-exploit edges)
@@ -231,81 +291,87 @@ class AccessAnomalyDetector:
 
         # 3. Lateral Hop from Known Compromised Incident Origin
         if is_compromised_origin and t.startswith("server:") and "critical" in t:
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.HIGH_RISK_PIVOT,
-                baseline_reference="INCIDENT_CORRELATION_POLICY: Originating entity under active investigation (EVT-MT101-PHISH)",
+                rule_id="RULE-INCIDENT-LATERAL-PIVOT-01",
+                baseline_ref="INCIDENT_CORRELATION_POLICY: Originating entity under active investigation (EVT-MT101-PHISH)",
                 explanation=f"Lateral pivot from compromised workstation directly reaching high-value asset {step.target_id}.",
+                detection_rationale=f"Originating endpoint has confirmed incident association and pivots into critical server {step.target_id}.",
+                recommended_investigation=f"Isolate originating host {step.source_id} and review authentication sessions to {step.target_id}.",
                 step_score=85,
+                sequence_id=sequence_id,
             )
 
         # 4. Missing Authorization for Server Login / Credential Hijack
         if rtype == RelationshipType.LOGGED_IN_TO and t.startswith("server:"):
             hijacked = props.get("hijacked_user")
             if hijacked:
-                return UnexpectedRelationship(
-                    step_index=step.step_index,
-                    source_id=step.source_id,
-                    relationship_type=rtype,
-                    target_id=step.target_id,
+                return self._create_finding(
+                    step=step,
                     deviation_type=DeviationType.EXPLOIT_PRECONDITION,
-                    baseline_reference=f"IAM_POLICY: Service principal ({hijacked}) abused from unassigned workstation",
+                    rule_id="RULE-IAM-SERVICE-HIJACK-01",
+                    baseline_ref=f"IAM_POLICY: Service principal ({hijacked}) abused from unassigned workstation",
                     explanation=f"Interactive login attempt using privileged service account {hijacked} from endpoint {s}.",
+                    detection_rationale=f"Interactive logon using non-interactive service principal {hijacked} initiated from client workstation {step.source_id}.",
+                    recommended_investigation=f"Revoke active Kerberos tickets for {hijacked} and inspect memory artifacts on {step.source_id}.",
                     step_score=88,
+                    sequence_id=sequence_id,
                 )
             if (s, t) not in self._permissions_cache:
-                return UnexpectedRelationship(
-                    step_index=step.step_index,
-                    source_id=step.source_id,
-                    relationship_type=rtype,
-                    target_id=step.target_id,
+                return self._create_finding(
+                    step=step,
                     deviation_type=DeviationType.MISSING_AUTHORIZATION,
-                    baseline_reference="IAM_POLICY: No authorized HAS_PERMISSION grant for target server",
+                    rule_id="RULE-IAM-MISSING-AUTH-01",
+                    baseline_ref="IAM_POLICY: No authorized HAS_PERMISSION grant for target server",
                     explanation=f"Identity {s} logged into infrastructure server {t} without documented access entitlement.",
+                    detection_rationale=f"User {step.source_id} has no documented HAS_PERMISSION grant for server {step.target_id}.",
+                    recommended_investigation=f"Review Active Directory role assignments and session audit logs for {step.source_id}.",
                     step_score=50,
+                    sequence_id=sequence_id,
                 )
 
         # 5. Network Tiering Violations
         # A) Client Workstation directly to Database Tier
         if s.startswith("device:") and t.startswith("server:srv-db"):
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.TIER_BYPASS,
-                baseline_reference="BASELINE_TIERING_POLICY: Direct Client-to-Database bypass prohibited (Port 5432)",
+                rule_id="RULE-TIER-CLIENT-TO-DB-01",
+                baseline_ref="BASELINE_TIERING_POLICY: Direct Client-to-Database bypass prohibited (Port 5432)",
                 explanation="Workstation attempted direct database connection, bypassing the application gateway tier.",
+                detection_rationale=f"Direct client-to-database connection from {step.source_id} to {step.target_id}; violates architecture tiering.",
+                recommended_investigation=f"Verify network firewall segmentation between workstation subnet and {step.target_id}.",
                 step_score=55,
+                sequence_id=sequence_id,
             )
 
         # B) Client Workstation directly to Domain Controller (RDP/RPC)
         if s.startswith("device:") and t.startswith("server:srv-dc"):
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.TIER_BYPASS,
-                baseline_reference="BASELINE_TIERING_POLICY: Direct Client-to-Domain Controller administration prohibited",
+                rule_id="RULE-TIER-CLIENT-TO-DC-01",
+                baseline_ref="BASELINE_TIERING_POLICY: Direct Client-to-Domain Controller administration prohibited",
                 explanation=f"Workstation attempted direct administration connection to Domain Controller (port {port or '3389'}).",
+                detection_rationale=f"Direct administrative connection initiated from standard workstation {step.source_id} to Domain Controller {step.target_id}.",
+                recommended_investigation=f"Verify administrative jump-box compliance and check for unauthorized RDP/RPC sessions on {step.target_id}.",
                 step_score=60,
+                sequence_id=sequence_id,
             )
 
         # C) Workstation-to-Workstation Lateral Peer Connection (Port 445 SMB)
         if s.startswith("device:") and t.startswith("device:") and s != t:
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.TIER_BYPASS,
-                baseline_reference="BASELINE_TIERING_POLICY: Workstation peer-to-peer SMB lateral traversal prohibited",
+                rule_id="RULE-TIER-PEER-SMB-01",
+                baseline_ref="BASELINE_TIERING_POLICY: Workstation peer-to-peer SMB lateral traversal prohibited",
                 explanation=f"Direct peer connection between workstations across client subnets ({s} -> {t}).",
+                detection_rationale=f"Direct workstation-to-workstation SMB connection observed between {step.source_id} and {step.target_id}.",
+                recommended_investigation=f"Inspect workstation network logs for pass-the-hash or lateral movement indicators between {step.source_id} and {step.target_id}.",
                 step_score=50,
+                sequence_id=sequence_id,
             )
 
         # 6. Novel Legitimate Connection (conforming to peer group & tiering)
@@ -315,27 +381,29 @@ class AccessAnomalyDetector:
         is_app_to_erp = s == "server:srv-app-01" and t.startswith("app:")
 
         if is_client_to_app or is_user_to_device or is_app_to_erp:
-            return UnexpectedRelationship(
-                step_index=step.step_index,
-                source_id=step.source_id,
-                relationship_type=rtype,
-                target_id=step.target_id,
+            return self._create_finding(
+                step=step,
                 deviation_type=DeviationType.UNOBSERVED_RELATIONSHIP,
-                baseline_reference="PEER_GROUP_BASELINE: Novel connection conforms to department role and network tiering",
+                rule_id="RULE-ROLE-NOVEL-CONFORMING-01",
+                baseline_ref="PEER_GROUP_BASELINE: Novel connection conforms to department role and network tiering",
                 explanation=f"Newly observed connection {s} -[{rtype}]-> {t} conforms to standard enterprise role profile.",
+                detection_rationale=f"Relationship was unrecorded historically, but endpoints conform to {evaluated_dept} department role profile and network tiering.",
+                recommended_investigation="Update baseline profile to incorporate legitimate newly provisioned activity. No containment required.",
                 step_score=20,
+                sequence_id=sequence_id,
             )
 
         # 7. Default unobserved edge
-        return UnexpectedRelationship(
-            step_index=step.step_index,
-            source_id=step.source_id,
-            relationship_type=rtype,
-            target_id=step.target_id,
+        return self._create_finding(
+            step=step,
             deviation_type=DeviationType.UNOBSERVED_RELATIONSHIP,
-            baseline_reference="HISTORICAL_BASELINE: Relationship not recorded in historical baseline",
+            rule_id="RULE-HISTORICAL-UNOBSERVED-01",
+            baseline_ref="HISTORICAL_BASELINE: Relationship not recorded in historical baseline",
             explanation=f"Unobserved connection {s} -[{rtype}]-> {t} with unverified policy context.",
+            detection_rationale=f"Connection {step.source_id} -[{step.relationship_type.value}]-> {step.target_id} has no historical precedent in graph.",
+            recommended_investigation="Review business justification with identity owner and asset administrator.",
             step_score=30,
+            sequence_id=sequence_id,
         )
 
 
@@ -347,10 +415,10 @@ class AccessAnomalyDetector:
         entity_id = request.evaluated_entity_id.strip()
         history_comp, baseline_conf, evaluated_dept = self._assess_cold_start(entity_id)
 
+        has_confirmed_compromise = request.client_context.get("has_confirmed_compromise", False) or request.client_context.get("is_compromised", False)
         is_compromised_origin = (
-            "dev-ws-101" in entity_id.lower()
-            or request.client_context.get("case_id") == "MT-101"
-            or request.client_context.get("is_compromised", False)
+            has_confirmed_compromise
+            and ("dev-ws-101" in entity_id.lower() or request.client_context.get("case_id") == "MT-101")
         )
 
         unexpected_list: List[UnexpectedRelationship] = []
@@ -361,6 +429,7 @@ class AccessAnomalyDetector:
                 step=step,
                 evaluated_dept=evaluated_dept,
                 is_compromised_origin=is_compromised_origin,
+                sequence_id=request.sequence_id,
             )
             if finding:
                 unexpected_list.append(finding)
@@ -573,7 +642,11 @@ class AccessAnomalyDetector:
             evaluated_entity_id=mapped_device_id or user_id,
             steps=steps,
             include_explanations=True,
-            client_context={"case_id": case_id, "is_compromised": True},
+            client_context={
+                "case_id": case_id,
+                "is_phishing_recipient": True,
+                "has_confirmed_compromise": False,
+            },
         )
         return self.evaluate_sequence(req)
 

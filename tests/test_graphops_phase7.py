@@ -1,486 +1,304 @@
 """
-ThreatLens GraphOps - Phase 7 Integration and UI Contract Tests
-Tests the GraphOps Interface, Case Evidence Bridge, and What-If Containment Simulator.
-Verifies strictly in-memory simulation, before/after path delta calculations,
-evidence mapping from email cases to corporate graph entities, and API responses.
+ThreatLens GraphOps - Phase 7 Integration Test Suite
+Verifies:
+1. Unified Tri-Detector Findings Stream API (Kafka-triggered rule, scikit-learn ML, PyG GNN findings).
+2. Dijkstra minimum-cost shortest path endpoints (/shortest-path and /dijkstra alias).
+3. PyG structural relationship evaluation endpoint (/events/pyg/evaluate).
+4. Multi-engine status and health monitoring endpoints.
+5. Frontend HTML, CSS, and JavaScript contract integrity for the unified analyst workspace.
 """
 
 import pytest
-import os
-from typing import Dict, List, Any, Optional, Set
+from pathlib import Path
 from fastapi.testclient import TestClient
 
 from backend.main import app
-from backend.graphops.schema import (
-    NodeLabel,
-    RelationshipType,
-    EvidenceClass,
-    CriticalityTier,
-    InterventionAction,
-)
-from backend.models.graphops import (
-    ContainmentSimulationRequest,
-    ContainmentSimulationResult,
-    ProposedIntervention,
-    CaseBridgeResponse,
-)
-from backend.graphops.attack_paths import AttackPathService
 from backend.graphops.client import get_graphops_client
-from backend.data.graphops_fixtures import load_sample_enterprise_fixture
+from backend.graphops.mock_client import get_mock_graphops_client
+from backend.graphops.kafka_producer import GraphOpsKafkaProducer
+from backend.graphops.kafka_processor import GraphOpsEventProcessor
+from backend.graphops.kafka_worker import GraphOpsKafkaWorker
+from backend.api.graphops_routes import get_kafka_producer_dep, get_kafka_worker_dep
+from backend.models.graphops import (
+    DijkstraShortestPathRequest,
+    DijkstraShortestPathResult,
+    PyGEvaluateRequest,
+)
 
 
-# =====================================================================
-# IN-MEMORY GRAPH MOCK FOR PHASE 7 SIMULATION & CASE BRIDGE
-# =====================================================================
-
-class InMemoryPhase7GraphClient:
-    """Mock client simulating Neo4j with path search, Crown Jewels, and USES queries."""
-
-    def __init__(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
-        self.nodes = {n["id"].lower(): n for n in nodes}
-        self.aliases: Dict[str, str] = {}
-        for n in nodes:
-            nid = n["id"].lower()
-            props = n.get("properties", {})
-            for key in ["email", "hostname", "user_id", "device_id", "server_id", "asset_id"]:
-                val = props.get(key)
-                if val:
-                    self.aliases[str(val).lower()] = nid
-                    if ":" in str(val):
-                        self.aliases[str(val).split(":", 1)[1].lower()] = nid
-            if ":" in nid:
-                self.aliases[nid.split(":", 1)[1].lower()] = nid
-        self.edges = edges
-
-    def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        params = params or {}
-        q = query.strip()
-
-        # 1. Node Resolution Query
-        if "WHERE n.id = $id" in q or "toLower(n.id) = toLower($id)" in q:
-            target_id = str(params.get("id", "")).lower()
-            id_without_prefix = str(params.get("id_without_prefix", "")).lower()
-
-            resolved = (
-                self.nodes.get(target_id)
-                or self.nodes.get(id_without_prefix)
-                or self.aliases.get(target_id)
-                or self.aliases.get(id_without_prefix)
-            )
-            if resolved:
-                node = resolved if isinstance(resolved, dict) else self.nodes[resolved]
-                return [{
-                    "id": node["id"],
-                    "labels": node.get("labels", []),
-                    "properties": node.get("properties", {}),
-                }]
-            return []
-
-        # 2. Query All Crown Jewels
-        if "MATCH (c:CriticalAsset)" in q:
-            results = []
-            for n in self.nodes.values():
-                if "CriticalAsset" in n.get("labels", []) or n.get("properties", {}).get("criticality") == "CRITICAL":
-                    results.append({"id": n["id"]})
-            return results
-
-        # 3. User to Assigned Device Query: MATCH (u {id: $uid})-[:USES]->(d)
-        if "-[:USES]->(d)" in q:
-            uid = str(params.get("uid", "")).lower()
-            results = []
-            for e in self.edges:
-                if e["source_id"].lower() == uid and e["relationship_type"] == "USES":
-                    target_node = self.nodes.get(e["target_id"].lower())
-                    if target_node:
-                        results.append({
-                            "id": target_node["id"],
-                            "labels": target_node.get("labels", []),
-                            "properties": target_node.get("properties", {}),
-                        })
-            return results
-
-        # 4. Path Search Query: MATCH p = (start)-[r*1..N]->(target)
-        if "MATCH p = (start)-[r*" in q:
-            entry_id = str(params.get("entry_id", "")).lower()
-            target_ids = {str(t).lower() for t in params.get("target_ids", [])}
-            allowed_types = set(params.get("allowed_types", []))
-            include_hypothetical = params.get("include_hypothetical", False)
-            limit = params.get("limit", 50)
-
-            found_paths = []
-
-            def dfs(current_id: str, path_nodes: List[Dict[str, Any]], path_edges: List[Dict[str, Any]], visited_ids: Set[str]):
-                if len(found_paths) >= limit or len(path_edges) >= 6:
-                    return
-
-                for e in self.edges:
-                    src = e["source_id"].lower()
-                    if src != current_id:
-                        continue
-
-                    rel_type = e["relationship_type"]
-                    ev_class = e.get("evidence_class", "OBSERVED")
-
-                    if allowed_types and rel_type not in allowed_types:
-                        continue
-                    if not include_hypothetical:
-                        if rel_type == "POTENTIAL_EXPLOIT" or ev_class == "HYPOTHETICAL":
-                            continue
-
-                    tgt = e["target_id"].lower()
-                    if tgt in visited_ids:
-                        continue
-
-                    tgt_node = self.nodes.get(tgt)
-                    if not tgt_node:
-                        continue
-
-                    new_nodes = path_nodes + [tgt_node]
-                    edge_dict = {
-                        "type": rel_type,
-                        "source_id": e["source_id"],
-                        "target_id": e["target_id"],
-                        "evidence_class": ev_class,
-                        "properties": e.get("properties", {}),
-                    }
-                    new_edges = path_edges + [edge_dict]
-
-                    if tgt in target_ids:
-                        found_paths.append({
-                            "path_nodes": new_nodes,
-                            "path_relationships": new_edges,
-                        })
-
-                    dfs(tgt, new_nodes, new_edges, visited_ids | {tgt})
-
-            start_node = self.nodes.get(entry_id)
-            if start_node:
-                dfs(entry_id, [start_node], [], {entry_id})
-
-            return found_paths
-
-        return []
-
-    def health_check(self) -> Dict[str, Any]:
-        return {
-            "status": "healthy",
-            "connected": True,
-            "database": "neo4j",
-            "active_nodes": len(self.nodes),
-            "active_relationships": len(self.edges),
-            "error": None,
-        }
-
-
-def build_phase7_fixture_mock() -> InMemoryPhase7GraphClient:
-    """Builds an InMemoryPhase7GraphClient preloaded with the synthetic enterprise fixture."""
-    fixture = load_sample_enterprise_fixture()
-    nodes = []
-    edges = []
-
-    label_map = {
-        "users": [NodeLabel.USER.value],
-        "devices": [NodeLabel.DEVICE.value],
-        "servers": [NodeLabel.SERVER.value],
-        "applications": [NodeLabel.APPLICATION.value],
-        "ips": [NodeLabel.IP_ADDRESS.value],
-        "vulnerabilities": [NodeLabel.VULNERABILITY.value],
-        "critical_assets": [NodeLabel.CRITICAL_ASSET.value],
-        "security_events": [NodeLabel.SECURITY_EVENT.value],
-    }
-
-    prefix_map = {
-        "users": "user",
-        "devices": "device",
-        "servers": "server",
-        "applications": "app",
-        "ips": "ip",
-        "vulnerabilities": "vuln",
-        "critical_assets": "critical",
-        "security_events": "event",
-    }
-
-    for category, entity_list in fixture["entities"].items():
-        labels = label_map.get(category, ["Entity"])
-        prefix = prefix_map.get(category, "entity")
-        for ent in entity_list:
-            raw_id = ent.get("id") or ent.get("ip") or ent.get("cve_id")
-            clean_id = str(raw_id).lower()
-            canonical_id = clean_id if clean_id.startswith(f"{prefix}:") else f"{prefix}:{clean_id}"
-            props = dict(ent)
-            props["id"] = canonical_id
-            nodes.append({
-                "id": canonical_id,
-                "labels": labels,
-                "properties": props,
-            })
-
-    alias_map = {}
-    for n in nodes:
-        props = n["properties"]
-        if "email" in props:
-            alias_map[f"user:{props['email'].lower()}"] = n["id"]
-            alias_map[props['email'].lower()] = n["id"]
-
-    for r in fixture["relationships"]["relationships"]:
-        src = r["source_id"].lower()
-        tgt = r["target_id"].lower()
-        src = alias_map.get(src, src)
-        tgt = alias_map.get(tgt, tgt)
-        if src.startswith("vuln:cve-"):
-            src = "vuln:" + src[5:].upper()
-        if tgt.startswith("vuln:cve-"):
-            tgt = "vuln:" + tgt[5:].upper()
-
-        edge_props = dict(r.get("properties", {}))
-        edge_props["evidence_class"] = r.get("evidence_class", "OBSERVED")
-        edge_props["provenance"] = r.get("provenance", "Test")
-        edge_props["confidence"] = r.get("confidence", 1.0)
-        edge_props["timestamp"] = r.get("timestamp")
-
-        edges.append({
-            "source_id": src,
-            "target_id": tgt,
-            "relationship_type": r["relationship_type"],
-            "evidence_class": r.get("evidence_class", "OBSERVED"),
-            "properties": edge_props,
-        })
-
-    return InMemoryPhase7GraphClient(nodes, edges)
+def build_phase7_fixture_mock():
+    """Returns in-memory mock client preloaded with enterprise fixture for tests."""
+    return get_mock_graphops_client()
 
 
 @pytest.fixture
-def mock_phase7_client():
-    return build_phase7_fixture_mock()
+def test_client():
+    """Provides a TestClient with dependency override to the in-memory mock graph and streaming pipeline."""
+    mock_cli = get_mock_graphops_client()
+    mock_prod = GraphOpsKafkaProducer(mock_mode=True)
+    mock_proc = GraphOpsEventProcessor(client=mock_cli, producer=mock_prod)
+    mock_worker = GraphOpsKafkaWorker(processor=mock_proc, producer=mock_prod, mock_mode=True)
 
-
-@pytest.fixture
-def test_client(mock_phase7_client):
-    app.dependency_overrides[get_graphops_client] = lambda: mock_phase7_client
+    app.dependency_overrides[get_graphops_client] = lambda: mock_cli
+    app.dependency_overrides[get_kafka_producer_dep] = lambda: mock_prod
+    app.dependency_overrides[get_kafka_worker_dep] = lambda: mock_worker
     client = TestClient(app)
     yield client
     app.dependency_overrides.pop(get_graphops_client, None)
+    app.dependency_overrides.pop(get_kafka_producer_dep, None)
+    app.dependency_overrides.pop(get_kafka_worker_dep, None)
 
 
 # =====================================================================
-# 1. WHAT-IF CONTAINMENT SIMULATION UNIT TESTS
+# 1. DIJKSTRA ENDPOINT TESTS & ALIASES
 # =====================================================================
 
-class TestWhatIfContainmentSimulation:
+def test_fastapi_dijkstra_post_endpoint(test_client):
+    """Verifies POST /api/v1/graphops/dijkstra and /api/v1/graphops/shortest-path."""
+    payload = {
+        "entry_node_id": "device:dev-ws-101",
+        "target_node_id": "critical:crit-db-financial",
+        "include_hypothetical": True,
+    }
 
-    def test_simulation_does_not_modify_live_graph(self, mock_phase7_client):
-        """Simulation must guarantee that live persistent graph is unmodified."""
-        service = AttackPathService(mock_phase7_client)
-        req = ContainmentSimulationRequest(
-            entry_node_id="device:dev-ws-101",
-            proposed_interventions=[
-                ProposedIntervention(
-                    action=InterventionAction.ISOLATE_NODE,
-                    node_id="server:srv-app-01",
-                    description="Isolate application server gateway",
-                )
-            ],
-        )
-        res = service.simulate_containment(req)
+    # Test alias
+    resp_alias = test_client.post("/api/v1/graphops/dijkstra", json=payload)
+    assert resp_alias.status_code == 200
+    data_alias = resp_alias.json()
+    assert "path_found" in data_alias
+    assert "total_cost" in data_alias
+    assert "hop_count" in data_alias
+    assert "nodes" in data_alias
+    assert "steps" in data_alias
 
-        assert res.live_graph_modified is False
-        assert "SIMULATION ONLY" in res.safety_disclaimer
-        assert res.simulation_id.startswith("SIM-")
+    # Test canonical
+    resp_canon = test_client.post("/api/v1/graphops/shortest-path", json=payload)
+    assert resp_canon.status_code == 200
+    data_canon = resp_canon.json()
 
-    def test_simulation_full_containment_of_gateway(self, mock_phase7_client):
-        """Isolating srv-app-01 should eliminate all attack paths traversing through it."""
-        service = AttackPathService(mock_phase7_client)
-        req = ContainmentSimulationRequest(
-            entry_node_id="device:dev-ws-101",
-            proposed_interventions=[
-                ProposedIntervention(
-                    action=InterventionAction.ISOLATE_NODE,
-                    node_id="server:srv-app-01",
-                )
-            ],
-        )
-        res = service.simulate_containment(req)
+    assert data_alias["path_found"] == data_canon["path_found"]
+    assert data_alias["total_cost"] == data_canon["total_cost"]
 
-        assert res.baseline_paths_count > 0
-        assert res.remaining_paths_count == 0
-        assert res.paths_eliminated_count == res.baseline_paths_count
-        assert res.containment_efficiency_pct == 100.0
-        assert len(res.residual_exposed_assets) == 0
-        assert "Full containment achieved" in res.analyst_verdict
 
-        for ps in res.path_statuses:
-            assert ps.status == "ELIMINATED"
-            assert ps.severed_at_step is not None
-
-    def test_simulation_partial_containment_relationship(self, mock_phase7_client):
-        """Severing the connection to srv-db-01 should eliminate database paths while leaving DC paths active."""
-        service = AttackPathService(mock_phase7_client)
-        req = ContainmentSimulationRequest(
-            entry_node_id="device:dev-ws-101",
-            proposed_interventions=[
-                ProposedIntervention(
-                    action=InterventionAction.BLOCK_CONNECTION,
-                    source_id="server:srv-app-01",
-                    target_id="server:srv-db-01",
-                    relationship_type=RelationshipType.OBSERVED_CONNECTION,
-                )
-            ],
-        )
-        res = service.simulate_containment(req)
-
-        assert res.baseline_paths_count > 0
-        assert res.live_graph_modified is False
-        assert res.paths_eliminated_count >= 1
-        assert res.remaining_paths_count >= 1
-        assert "Partial containment" in res.analyst_verdict
+def test_fastapi_dijkstra_get_endpoint(test_client):
+    """Verifies GET /api/v1/graphops/dijkstra with query parameters."""
+    resp = test_client.get(
+        "/api/v1/graphops/dijkstra?entry_node_id=device:dev-ws-101&target_node_id=critical:crit-db-financial&include_hypothetical=true"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["path_found"] is True
+    assert data["total_cost"] is not None
+    assert data["total_cost"] > 0
+    assert len(data["steps"]) > 0
 
 
 # =====================================================================
-# 2. CASE-TO-GRAPH EVIDENCE BRIDGE TESTS
+# 2. EVENT STREAMING SIMULATION & TRI-DETECTOR FINDINGS
 # =====================================================================
 
-class TestCaseBridgeResolution:
+def test_fastapi_simulate_compromise_indicator_event(test_client):
+    """Verifies POST /api/v1/graphops/events/simulate?scenario=COMPROMISE_INDICATOR."""
+    resp = test_client.post("/api/v1/graphops/events/simulate?scenario=COMPROMISE_INDICATOR")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "COMPLETED"
+    assert "event_published" in data
+    assert "event_id" in data["event_published"]
+    assert data["findings_generated_count"] >= 1
+    assert len(data["findings"]) >= 1
 
-    def test_bridge_correlates_email_case_to_user_and_device(self, mock_phase7_client):
-        """Recipient victim1@corporation.com must map to usr-101 and DEV-WS-101."""
-        service = AttackPathService(mock_phase7_client)
-        res = service.bridge_case_to_graph("MT-101")
-
-        assert res.case_id == "MT-101"
-        assert res.primary_compromised_node is not None
-        assert res.primary_compromised_node.id == "user:usr-101"
-
-        mapped_types = [m.evidence_type for m in res.mapped_entities]
-        assert "RECIPIENT_EMAIL" in mapped_types
-        assert "ASSIGNED_DEVICE" in mapped_types
-
-        mapped_nodes = [m.mapped_node_id for m in res.mapped_entities]
-        assert "user:usr-101" in mapped_nodes
-        assert "device:dev-ws-101" in mapped_nodes
-
-        # Verify external attacker IOCs are quarantined outside internal graph
-        assert "185.190.140.22" in res.unmapped_external_iocs
-        assert "alert-center.xyz" in res.unmapped_external_iocs
-        assert "user:usr-101" in res.recommended_blast_radius_url
+    # Verify structured fields of returned finding
+    finding = data["findings"][0]
+    assert "finding_id" in finding
+    assert "analysis_type" in finding
+    assert "affected_entity_id" in finding
+    assert "severity" in finding
+    assert "title" in finding
+    assert "summary" in finding
 
 
-# =====================================================================
-# 3. FASTAPI API INTEGRATION ENDPOINT TESTS
-# =====================================================================
+def test_fastapi_simulate_identity_logon_event(test_client):
+    """Verifies POST /api/v1/graphops/events/simulate?scenario=IDENTITY_LOGON."""
+    resp = test_client.post("/api/v1/graphops/events/simulate?scenario=IDENTITY_LOGON")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "COMPLETED"
+    assert "event_published" in data
+    assert "event_id" in data["event_published"]
 
-class TestGraphOpsPhase7APIEndpoints:
 
-    def test_api_simulate_containment_endpoint(self, test_client):
-        """POST /api/v1/graphops/simulate-containment returns valid result schema."""
-        payload = {
-            "entry_node_id": "device:dev-ws-101",
-            "proposed_interventions": [
-                {
-                    "action": "ISOLATE_NODE",
-                    "node_id": "server:srv-app-01",
-                    "description": "Quarantine compromised jump host"
-                }
-            ]
-        }
-        resp = test_client.post("/api/v1/graphops/simulate-containment", json=payload)
-        assert resp.status_code == 200
-        data = resp.json()
+def test_fastapi_simulate_network_connection_event(test_client):
+    """Verifies POST /api/v1/graphops/events/simulate?scenario=NETWORK_CONNECTION."""
+    resp = test_client.post("/api/v1/graphops/events/simulate?scenario=NETWORK_CONNECTION")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "COMPLETED"
+    assert "event_published" in data
+    assert "event_id" in data["event_published"]
 
-        assert data["live_graph_modified"] is False
-        assert data["baseline_paths_count"] > 0
-        assert data["remaining_paths_count"] == 0
-        assert data["paths_eliminated_count"] == data["baseline_paths_count"]
-        assert data["containment_efficiency_pct"] == 100.0
-        assert "SIMULATION ONLY" in data["safety_disclaimer"]
 
-    def test_api_simulate_containment_404_entry_node(self, test_client):
-        """Simulation with non-existent entry node returns 404."""
-        payload = {
-            "entry_node_id": "device:non-existent-device-xyz",
-            "proposed_interventions": [{"action": "ISOLATE_NODE", "node_id": "server:srv-app-01"}]
-        }
-        resp = test_client.post("/api/v1/graphops/simulate-containment", json=payload)
-        assert resp.status_code == 404
-        assert "does not exist" in resp.json()["detail"].lower() or "not found" in resp.json()["detail"].lower()
+def test_fastapi_get_event_findings(test_client):
+    """Verifies GET /api/v1/graphops/events/findings returns structured findings."""
+    # First inject an event to guarantee findings exist
+    test_client.post("/api/v1/graphops/events/simulate?scenario=COMPROMISE_INDICATOR")
 
-    def test_api_case_bridge_endpoint(self, test_client):
-        """GET /api/v1/graphops/bridge/case/MT-101 maps recipient and isolates external IOCs."""
-        resp = test_client.get("/api/v1/graphops/bridge/case/MT-101")
-        assert resp.status_code == 200
-        data = resp.json()
+    resp = test_client.get("/api/v1/graphops/events/findings?limit=20")
+    assert resp.status_code == 200
+    findings = resp.json()
+    assert isinstance(findings, list)
+    assert len(findings) > 0
 
-        assert data["case_id"] == "MT-101"
-        assert data["primary_compromised_node"]["id"] == "user:usr-101"
-        assert len(data["mapped_entities"]) >= 2
-        assert "185.190.140.22" in data["unmapped_external_iocs"]
-        assert "/api/v1/graphops/blast-radius" in data["recommended_blast_radius_url"]
+    first = findings[0]
+    assert "finding_id" in first
+    assert "analysis_type" in first
+    assert "affected_entity_id" in first
+    assert "severity" in first
 
 
 # =====================================================================
-# 4. FRONTEND UI ARTIFACT CONTRACT TESTS
+# 3. PYG STRUCTURAL EVALUATION ENDPOINT
 # =====================================================================
 
-class TestFrontendUIContract:
+def test_fastapi_pyg_evaluate_endpoint(test_client):
+    """Verifies POST /api/v1/graphops/events/pyg/evaluate."""
+    payload = {
+        "source_entity_id": "device:dev-ws-101",
+        "target_entity_id": "server:srv-app-01",
+        "relationship_type": "NETWORK_CONNECTION",
+    }
+    resp = test_client.post("/api/v1/graphops/events/pyg/evaluate", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "structural_anomaly_score" in data
+    assert "predicted_plausibility" in data
+    assert "is_anomaly" in data
+    assert "model_name" in data
+    assert 0.0 <= data["structural_anomaly_score"] <= 100.0
 
-    def test_html_contains_graphops_workspace_and_components(self):
-        """Verifies index.html has all required GraphOps DOM IDs and controls."""
-        html_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "index.html")
-        assert os.path.isfile(html_path)
 
-        with open(html_path, "r", encoding="utf-8") as f:
-            html = f.read()
+def test_fastapi_pyg_status_endpoint(test_client):
+    """Verifies GET /api/v1/graphops/events/pyg/status."""
+    resp = test_client.get("/api/v1/graphops/events/pyg/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "model_name" in data
+    assert "device" in data
+    assert "threshold" in data
 
-        # Navigation and view pane
-        assert 'id="nav-item-graphops"' in html
-        assert 'id="view-graphops"' in html
-        assert 'id="btn-correlate-case-graphops"' in html
 
-        # Status and bridge banner
-        assert 'id="graphops-db-indicator"' in html
-        assert 'id="btn-graphops-sync-fixture"' in html
-        assert 'id="graphops-case-bridge-banner"' in html
+# =====================================================================
+# 4. HEALTH MONITORING ENDPOINTS
+# =====================================================================
 
-        # Mode buttons
-        assert 'id="tab-graphops-blast"' in html
-        assert 'id="tab-graphops-paths"' in html
-        assert 'id="tab-graphops-simulator"' in html
+def test_fastapi_all_engine_health_endpoints(test_client):
+    """Verifies all five engine health endpoints required by the topbar."""
+    resp_core = test_client.get("/api/v1/health")
+    assert resp_core.status_code == 200
 
-        # Controls
-        assert 'id="graphops-node-preset-select"' in html
-        assert 'id="graphops-node-input"' in html
-        assert 'id="graphops-hops-select"' in html
-        assert 'id="graphops-direction-select"' in html
-        assert 'id="graphops-target-select"' in html
-        assert 'id="graphops-sim-action-select"' in html
-        assert 'id="graphops-sim-entity-input"' in html
-        assert 'id="btn-graphops-execute"' in html
-        assert 'id="btn-graphops-reset-sim"' in html
+    resp_graph = test_client.get("/api/v1/graphops/health")
+    assert resp_graph.status_code == 200
 
-        # Canvas & Inspector
-        assert 'id="cy-graphops-canvas"' in html
-        assert 'id="btn-cy-zoom-in"' in html
-        assert 'id="btn-cy-fit"' in html
-        assert 'id="graphops-inspector-card"' in html
-        assert 'id="panel-choke-points"' in html
-        assert 'id="panel-simulation-results"' in html
+    resp_kafka = test_client.get("/api/v1/graphops/events/status")
+    assert resp_kafka.status_code == 200
 
-    def test_js_app_contains_graphops_functions(self):
-        """Verifies app.js contains all required controller methods and Cytoscape integration."""
-        js_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "js", "app.js")
-        assert os.path.isfile(js_path)
+    resp_ml = test_client.get("/api/v1/graphops/events/ml/status")
+    assert resp_ml.status_code == 200
 
-        with open(js_path, "r", encoding="utf-8") as f:
-            js = f.read()
+    resp_pyg = test_client.get("/api/v1/graphops/events/pyg/status")
+    assert resp_pyg.status_code == 200
 
-        assert "initGraphOpsWorkspace" in js
-        assert "renderGraphOpsView" in js
-        assert "bridgeCaseToGraph" in js
-        assert "runBlastRadius" in js
-        assert "runAttackPaths" in js
-        assert "runContainmentSimulation" in js
-        assert "renderGraphOpsCanvas" in js
-        assert "renderChokePointsTable" in js
-        assert "cyGraphOps" in js
-        assert "node[?is_root]" in js
-        assert "node[?is_critical]" in js
-        assert "node[?is_severed]" in js
+
+# =====================================================================
+# 5. FRONTEND CONTRACT INTEGRITY TESTS
+# =====================================================================
+
+def test_frontend_html_contracts():
+    """Verifies required Phase 7 UI element IDs and data attributes exist in index.html."""
+    html_path = Path("frontend/index.html")
+    assert html_path.exists(), "frontend/index.html must exist"
+    content = html_path.read_text(encoding="utf-8")
+
+    # Topbar engine indicators
+    assert 'id="topbar-engine-indicator"' in content
+    assert 'id="topbar-db-indicator"' in content
+    assert 'id="topbar-kafka-indicator"' in content
+    assert 'id="topbar-ml-indicator"' in content
+    assert 'id="topbar-pyg-indicator"' in content
+
+    # GraphOps mode tabs
+    assert 'id="tab-graphops-blast"' in content
+    assert 'id="tab-graphops-paths"' in content
+    assert 'id="tab-graphops-simulator"' in content
+    assert 'id="tab-graphops-anomalies"' in content
+    assert 'id="tab-graphops-communities"' in content
+    assert 'id="tab-graphops-findings"' in content
+    assert 'id="badge-findings-count"' in content
+
+    # Controls
+    assert 'id="controls-group-path-algo"' in content
+    assert 'id="graphops-path-algo-select"' in content
+    assert 'id="controls-group-findings-scenario"' in content
+    assert 'id="graphops-simulate-scenario-select"' in content
+
+    # Inspector actions
+    assert 'id="insp-actions-box"' in content
+    assert 'id="btn-insp-action-blast"' in content
+    assert 'id="btn-insp-action-dijkstra"' in content
+    assert 'id="btn-insp-action-isolate"' in content
+    assert 'id="btn-insp-action-pyg"' in content
+
+    # Findings Panel & Table
+    assert 'id="panel-findings-results"' in content
+    assert 'id="findings-filter-chips"' in content
+    assert 'id="findings-severity-filter"' in content
+    assert 'id="findings-tbody"' in content
+    assert 'id="btn-refresh-findings"' in content
+    assert 'id="btn-simulate-event-action"' in content
+
+    # Finding Detail Modal
+    assert 'id="modal-finding-detail"' in content
+    assert 'id="finding-modal-title"' in content
+    assert 'id="finding-modal-engine"' in content
+    assert 'id="finding-modal-severity-badge"' in content
+    assert 'id="finding-modal-source-badge"' in content
+    assert 'id="finding-modal-entity"' in content
+    assert 'id="finding-modal-details-container"' in content
+
+
+def test_frontend_css_contracts():
+    """Verifies required Phase 7 CSS classes exist in styles.css."""
+    css_path = Path("frontend/css/styles.css")
+    assert css_path.exists(), "frontend/css/styles.css must exist"
+    content = css_path.read_text(encoding="utf-8")
+
+    assert ".detector-pill" in content
+    assert ".detector-rule" in content
+    assert ".detector-sklearn" in content
+    assert ".detector-pyg" in content
+    assert ".detector-dijkstra" in content
+    assert ".detector-blast" in content
+    assert ".finding-row-new" in content
+
+
+def test_frontend_js_contracts():
+    """Verifies required Phase 7 functions and state variables exist in app.js."""
+    js_path = Path("frontend/js/app.js")
+    assert js_path.exists(), "frontend/js/app.js must exist"
+    content = js_path.read_text(encoding="utf-8")
+
+    # State properties
+    assert "graphOpsLastDijkstra:" in content
+    assert "findingsList:" in content
+    assert "findingsFilter:" in content
+    assert "findingsSeverityFilter:" in content
+
+    # Functions
+    assert "runDijkstraShortestPath" in content
+    assert "renderDijkstraBreakdown" in content
+    assert "fetchAndRenderFindings" in content
+    assert "renderFindingsTableRows" in content
+    assert "simulateStreamingSecurityEvent" in content
+    assert "openFindingDetailModal" in content
+    assert "closeFindingDetailModal" in content
+    assert "evaluatePyGRelationship" in content

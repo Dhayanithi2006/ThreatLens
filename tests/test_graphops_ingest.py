@@ -231,3 +231,144 @@ def test_fastapi_ingest_sample_and_summary_endpoints():
         assert "total_nodes" in sum_data
     finally:
         app.dependency_overrides.pop(get_graphops_client, None)
+
+
+# =====================================================================
+# 5. PHASE 2 STRENGTHENED DATA INTEGRITY & DEDUPLICATION TESTS
+# =====================================================================
+
+def test_relationship_validation_endpoint_typing_mismatch():
+    """
+    Verifies that relationships violating VALID_RELATIONSHIP_ENDPOINTS
+    are rejected with clear, actionable typing mismatch errors.
+    """
+    engine = GraphOpsIngestionEngine(client=MagicMock())
+    known_nodes = {"device:dev-ws-101", "vuln:cve-2024-21413", "server:srv-app-01"}
+
+    # Invalid: Device cannot 'USE' a Vulnerability
+    invalid_rel = {
+        "source_id": "device:dev-ws-101",
+        "target_id": "vuln:cve-2024-21413",
+        "relationship_type": "USES"
+    }
+    valid_res, err = engine.validate_relationship(invalid_rel, known_nodes)
+    assert valid_res is None
+    assert "Invalid relationship endpoint typing" in err
+    assert "cannot originate from 'Device'" in err or "cannot target 'Vulnerability'" in err
+
+    # Valid: Server HAS_VULNERABILITY Vulnerability
+    valid_rel = {
+        "source_id": "server:srv-app-01",
+        "target_id": "vuln:cve-2024-21413",
+        "relationship_type": "HAS_VULNERABILITY"
+    }
+    res, err = engine.validate_relationship(valid_rel, known_nodes)
+    assert err is None
+    assert res is not None
+    assert res["type"] == "HAS_VULNERABILITY"
+
+
+def test_ingest_payload_intra_payload_deduplication():
+    """
+    Verifies that duplicate nodes and duplicate relationships present within
+    the same payload are deduplicated into unique entries with property merges.
+    """
+    mock_client = MagicMock()
+    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
+    mock_client.execute_query.return_value = []
+    
+    # Track Cypher UNWIND batches executed
+    executed_batches = []
+    def fake_execute_write(query, params=None, database=None):
+        if params and "batch" in params:
+            executed_batches.append(params["batch"])
+        return {"nodes_created": len(params.get("batch", [])) if params else 0}
+
+    mock_client.execute_write.side_effect = fake_execute_write
+    engine = GraphOpsIngestionEngine(client=mock_client)
+
+    # Payload with duplicate User entries and duplicate relationships
+    payload = BulkIngestPayload(
+        dataset_name="dedup_test_v1",
+        entities=EntityIngestRequest(
+            users=[
+                UserNode(id="USR-1", user_id="USR-1", email="u1@corp.com", name="User 1", department="Engineering"),
+                UserNode(id="USR-1", user_id="USR-1", email="u1@corp.com", name="User 1", department="Security"),  # duplicate with updated dept
+            ],
+            devices=[
+                DeviceNode(id="DEV-1", device_id="DEV-1", hostname="WS-01", ip_address="10.0.1.1")
+            ]
+        ),
+        relationships=RelationshipIngestRequest(
+            relationships=[
+                EnterpriseRelationship(
+                    source_id="user:u1@corp.com",
+                    target_id="device:dev-1",
+                    relationship_type=RelationshipType.USES,
+                    properties={"confidence": 0.9}
+                ),
+                EnterpriseRelationship(
+                    source_id="user:u1@corp.com",
+                    target_id="device:dev-1",
+                    relationship_type=RelationshipType.USES,
+                    properties={"confidence": 1.0}  # duplicate relationship
+                )
+            ]
+        )
+    )
+
+    summary = engine.ingest_payload(payload)
+    assert summary.status == "SUCCESS"
+    assert summary.nodes_rejected == 0
+    assert summary.relationships_rejected == 0
+
+    # Verify that the User batch sent to Neo4j contained exactly 1 deduplicated record
+    user_batches = [b for b in executed_batches if any(n.get("label") == "User" for n in b)]
+    assert len(user_batches) == 1
+    assert len(user_batches[0]) == 1
+    # Check that updated properties were merged
+    assert user_batches[0][0]["properties"]["department"] == "Security"
+
+    # Verify that relationship batch contained exactly 1 deduplicated record
+    rel_batches = [b for b in executed_batches if any("relationship_type" in r.get("properties", {}) for r in b)]
+    assert len(rel_batches) == 1
+    assert len(rel_batches[0]) == 1
+    assert rel_batches[0][0]["properties"]["confidence"] == 1.0
+
+
+def test_partial_failure_reporting():
+    """
+    Verifies that malformed entities and invalid relationships are properly recorded
+    in 'errors' and 'rejected' counts, leading to status='PARTIAL'.
+    """
+    mock_client = MagicMock()
+    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
+    mock_client.execute_query.return_value = []
+    mock_client.execute_write.return_value = {"nodes_created": 1, "relationships_created": 0}
+
+    engine = GraphOpsIngestionEngine(client=mock_client)
+
+    payload = BulkIngestPayload(
+        dataset_name="partial_test",
+        entities=EntityIngestRequest(
+            users=[
+                UserNode(id="USR-VALID", user_id="USR-VALID", email="valid@corp.com", name="Valid User")
+            ]
+        ),
+        relationships=RelationshipIngestRequest(
+            relationships=[
+                EnterpriseRelationship(
+                    source_id="user:usr-valid",
+                    target_id="device:non-existent-device",
+                    relationship_type=RelationshipType.USES
+                )
+            ]
+        )
+    )
+
+    summary = engine.ingest_payload(payload)
+    assert summary.status == "PARTIAL"
+    assert summary.nodes_imported == 1
+    assert summary.relationships_rejected == 1
+    assert len(summary.errors) == 1
+    assert "Unresolved relationship reference" in summary.errors[0]

@@ -10,7 +10,8 @@ from enum import Enum
 from datetime import datetime, timezone
 import re
 import ipaddress
-from pydantic import BaseModel, Field, field_validator, model_validator
+import math
+from pydantic import BaseModel, Field, field_validator, model_validator, computed_field
 
 from backend.graphops.schema import (
     NodeLabel,
@@ -188,6 +189,37 @@ class SecurityEventNode(BaseModel):
         return canonicalize_node_id(NodeLabel.SECURITY_EVENT, v)
 
 
+class EmailAccountNode(BaseModel):
+    """Email identity/mailbox mapped to organizational users or external correspondents."""
+    id: str = Field(description="Canonical node ID e.g. email:alice@corp.com")
+    email_address: str = Field(description="RFC 5322 formatted email address")
+    account_name: Optional[str] = Field(default=None, description="Display name or mailbox owner")
+    domain: Optional[str] = Field(default=None, description="Email domain e.g. corp.com")
+    mailbox_type: str = Field(default="USER", description="USER, SHARED, DISTRIBUTION_LIST, SERVICE")
+    is_internal: bool = Field(default=True, description="Whether domain is internally managed")
+    is_compromised: bool = Field(default=False, description="Whether mailbox is flagged in an active security case")
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("email_address")
+    @classmethod
+    def validate_email_format(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean):
+            raise ValueError(f"Invalid email address format: '{v}'")
+        return clean
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def set_canonical_id(cls, v: str) -> str:
+        return canonicalize_node_id(NodeLabel.EMAIL_ACCOUNT, v)
+
+    @model_validator(mode="after")
+    def populate_domain_if_missing(self):
+        if not self.domain and "@" in self.email_address:
+            self.domain = self.email_address.split("@", 1)[1]
+        return self
+
+
 class EnterpriseNode(BaseModel):
     """Generic/polymorphic container for any organizational security graph node."""
     id: str = Field(description="Canonical node identifier")
@@ -230,10 +262,27 @@ class EnterpriseRelationship(BaseModel):
         default=1.0, ge=0.0, le=1.0,
         description="Confidence score for this relationship (1.0 for verified direct observations)"
     )
+    traversal_cost: Optional[float] = Field(
+        default=None,
+        description="Non-negative finite traversal cost (difficulty/friction) for shortest-path analysis. Lower cost indicates easier traversal/exploitation."
+    )
     properties: Dict[str, Any] = Field(
         default_factory=dict,
         description="Metadata payload (e.g. port, protocol, auth_type, privilege_level)"
     )
+
+    @field_validator("traversal_cost")
+    @classmethod
+    def validate_traversal_cost(cls, v: Optional[float]) -> Optional[float]:
+        if v is not None:
+            if not isinstance(v, (int, float)):
+                raise ValueError("traversal_cost must be a numeric value")
+            if math.isnan(v) or math.isinf(v):
+                raise ValueError("traversal_cost must be a finite number")
+            if v < 0.0:
+                raise ValueError(f"traversal_cost must be non-negative (>= 0.0), got {v}")
+            return float(v)
+        return None
 
     @model_validator(mode="after")
     def compute_edge_id_and_validate(self):
@@ -262,6 +311,7 @@ class EntityIngestRequest(BaseModel):
     vulnerabilities: List[VulnerabilityNode] = Field(default_factory=list)
     critical_assets: List[CriticalAssetNode] = Field(default_factory=list)
     security_events: List[SecurityEventNode] = Field(default_factory=list)
+    email_accounts: List[EmailAccountNode] = Field(default_factory=list)
 
 
 class RelationshipIngestRequest(BaseModel):
@@ -293,6 +343,16 @@ class IngestSummaryResponse(BaseModel):
     relationships_rejected: int = Field(default=0, description="Relationships failing endpoint validation")
     errors: List[str] = Field(default_factory=list, description="Descriptive validation or conflict errors")
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    @computed_field
+    @property
+    def nodes_created_or_updated(self) -> int:
+        return self.nodes_imported + self.nodes_updated
+
+    @computed_field
+    @property
+    def relationships_created_or_updated(self) -> int:
+        return self.relationships_imported + self.relationships_updated
 
 
 # =====================================================================
@@ -386,6 +446,8 @@ class BlastRadiusResult(BaseModel):
     subgraph_nodes: List[EnterpriseNode] = Field(default_factory=list, description="All nodes for Cytoscape rendering")
     subgraph_edges: List[EnterpriseRelationship] = Field(default_factory=list, description="All edges in blast subgraph")
     summary_assessment: str = Field(description="Human-readable summary of exposure severity and critical findings")
+    calculation_time_ms: Optional[float] = Field(default=None, description="Execution time in milliseconds")
+    warnings: List[str] = Field(default_factory=list, description="Warnings about bounded traversal limits or assumptions")
 
 
 # =====================================================================
@@ -448,6 +510,76 @@ class AttackPathResult(BaseModel):
         default="Candidate paths discovered via directed traversal. "
                 "Paths containing HYPOTHETICAL steps represent potential vectors, not proof of attacker movement."
     )
+    calculation_time_ms: Optional[float] = Field(default=None, description="Execution time in milliseconds")
+    warnings: List[str] = Field(default_factory=list, description="Explicit limits and assumptions of the path search")
+
+
+# =====================================================================
+# 6.5 DIJKSTRA WEIGHTED SHORTEST-PATH CONTRACTS
+# =====================================================================
+
+class DijkstraEdgeCost(BaseModel):
+    """Detailed cost breakdown and evidence for a single edge traversed in Dijkstra shortest path."""
+    step_number: int
+    source_id: str
+    target_id: str
+    relationship_type: RelationshipType
+    evidence_class: EvidenceClass
+    cost: float = Field(ge=0.0, description="Non-negative traversal cost of this specific hop")
+    accumulated_cost: float = Field(ge=0.0, description="Running total cost from entry point to this hop")
+    provenance: str = Field(default="System Topology")
+    description: str = Field(default="")
+    rationale: str = Field(default="")
+
+    @property
+    def step_cost(self) -> float:
+        return self.cost
+
+
+class DijkstraShortestPathRequest(BaseModel):
+    """Input parameters for Dijkstra weighted shortest-path analysis."""
+    entry_node_id: str = Field(
+        description="Canonical ID or alias of starting node (e.g. device:dev-ws-101 or user:victim1@corporation.com)"
+    )
+    target_node_id: Optional[str] = Field(
+        default=None,
+        description="Specific target CriticalAsset ID (e.g. critical:crit-db-financial)"
+    )
+    target_node_ids: Optional[List[str]] = Field(
+        default=None,
+        description="Optional target set of CriticalAsset IDs; if omitted and target_node_id is omitted, evaluates across all Crown Jewels"
+    )
+    allowed_relationship_types: Optional[List[RelationshipType]] = Field(
+        default=None,
+        description="Constrain traversal to specified relationship types"
+    )
+    include_hypothetical: bool = Field(
+        default=True,
+        description="Whether to permit hypothetical exploit vectors (e.g. unpatched vulnerabilities)"
+    )
+    max_cost: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        description="Optional maximum cumulative cost ceiling"
+    )
+
+
+class DijkstraShortestPathResult(BaseModel):
+    """Output result of Dijkstra weighted shortest-path analysis."""
+    entry_node: EnterpriseNode
+    target_node: Optional[EnterpriseNode] = None
+    path_found: bool = Field(description="Whether a valid candidate route was found to any designated target")
+    total_cost: Optional[float] = Field(default=None, description="Minimum accumulated traversal cost")
+    hop_count: int = Field(default=0, description="Number of edges in the shortest path")
+    nodes: List[EnterpriseNode] = Field(default_factory=list, description="Ordered sequence of nodes along the minimum-cost route")
+    steps: List[DijkstraEdgeCost] = Field(default_factory=list, description="Per-edge cost and evidence breakdown")
+    reachable_targets: List[str] = Field(default_factory=list, description="Target IDs reached by search")
+    unreachable_targets: List[str] = Field(default_factory=list, description="Target IDs evaluated but unreachable")
+    cost_model_description: str = Field(
+        default="Deterministic non-negative traversal friction model where lower cost reflects lower attacker resistance/difficulty."
+    )
+    calculation_time_ms: float = Field(default=0.0, description="Execution time in milliseconds")
+    warnings: List[str] = Field(default_factory=list, description="Search bounds, assumptions, or missing weight notices")
 
 
 # =====================================================================
@@ -592,6 +724,12 @@ class CaseBridgeResponse(BaseModel):
         default=None,
         description="Direct API link to run blast-radius from the primary compromised node"
     )
+    investigation_disclaimer: str = Field(
+        default="RECEIPT IS NOT COMPROMISE: Delivery or receipt of a suspicious email indicates exposure. "
+                "The recipient user and assigned device represent candidate starting points for blast-radius analysis, "
+                "not confirmed compromised infrastructure.",
+        description="Explicit SOC caveat distinguishing email exposure from host exploitation"
+    )
 
 
 # =====================================================================
@@ -655,6 +793,22 @@ class AccessSequenceRequest(BaseModel):
 
 class UnexpectedRelationship(BaseModel):
     """Explicit finding describing why a particular relationship in the sequence is anomalous."""
+    finding_id: Optional[str] = Field(
+        default=None,
+        description="Unique identifier for this anomaly finding e.g. ANOM-RULE-01"
+    )
+    rule_id: Optional[str] = Field(
+        default=None,
+        description="Deterministic policy rule identifier e.g. RULE-TIER-01"
+    )
+    severity: Optional[str] = Field(
+        default=None,
+        description="Finding severity: CRITICAL, HIGH, MEDIUM, LOW, INFO"
+    )
+    affected_entity: Optional[str] = Field(
+        default=None,
+        description="Identifier of primary affected corporate entity"
+    )
     step_index: int = Field(ge=0)
     source_id: str
     relationship_type: RelationshipType
@@ -662,6 +816,26 @@ class UnexpectedRelationship(BaseModel):
     deviation_type: DeviationType
     baseline_reference: str = Field(description="Documented rule, policy, or historical baseline referenced")
     explanation: str = Field(description="Human-readable rationale explaining why this step is unexpected")
+    detection_rationale: Optional[str] = Field(
+        default=None,
+        description="Detailed technical rationale explaining rule trigger conditions"
+    )
+    recommended_investigation: Optional[str] = Field(
+        default=None,
+        description="Actionable next steps for security operations analyst"
+    )
+    timestamp: Optional[str] = Field(
+        default=None,
+        description="ISO 8601 timestamp when anomaly was evaluated"
+    )
+    supporting_event_sequence: Optional[str] = Field(
+        default=None,
+        description="Sequence identifier or step transition context"
+    )
+    relevant_graph_context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Graph metadata (labels, department, role, tier) for source and target"
+    )
     step_score: int = Field(ge=0, le=100, description="Step anomaly score contribution")
 
 
@@ -714,4 +888,289 @@ class AnomalyTestSuiteResult(BaseModel):
     false_positive_rate: float
     confusion_matrix: Dict[str, int]
     results: List[AnomalyTestSuiteItem]
+
+
+# =====================================================================
+# 10. KAFKA EVENT STREAMING & FINDINGS CONTRACTS
+# =====================================================================
+
+class SecurityEventType(str, Enum):
+    """Categorization of supported streaming security event types."""
+    ENDPOINT_ALERT = "ENDPOINT_ALERT"
+    IDENTITY_EVENT = "IDENTITY_EVENT"
+    NETWORK_CONNECTION = "NETWORK_CONNECTION"
+    PROCESS_EVENT = "PROCESS_EVENT"
+    COMPROMISE_INDICATOR = "COMPROMISE_INDICATOR"
+    EMAIL_INVESTIGATION_RESULT = "EMAIL_INVESTIGATION_RESULT"
+
+
+class SecurityEventEnvelope(BaseModel):
+    """Canonical security event envelope for Apache Kafka ingestion."""
+    event_id: str = Field(description="Unique stable event identifier (UUID or hash)")
+    schema_version: str = Field(default="1.0.0", description="Event contract version")
+    event_type: SecurityEventType = Field(description="Domain category of the security event")
+    source: str = Field(description="Originating telemetry producer or sensor")
+    occurred_at: str = Field(description="ISO8601 UTC timestamp of occurrence")
+    ingested_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO8601 UTC timestamp of ingestion into ThreatLens"
+    )
+    entity_ids: List[str] = Field(
+        min_length=1,
+        description="List of primary and related enterprise entity identifiers"
+    )
+    payload: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Validated event-specific telemetry attributes"
+    )
+    correlation_id: Optional[str] = Field(
+        default=None,
+        description="Optional case or investigation tracking ID"
+    )
+    severity: Optional[CriticalityTier] = Field(
+        default=None,
+        description="Normalized severity assessment"
+    )
+    evidence_metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Provenance and source telemetry metadata"
+    )
+
+
+class DeadLetterEventEnvelope(BaseModel):
+    """Dead-letter queue payload for failed or unprocessable security events."""
+    event_id: Optional[str] = Field(default=None, description="Event ID if extractable")
+    source_topic: str = Field(description="Kafka topic where event was received")
+    partition: Optional[int] = Field(default=None, description="Kafka partition")
+    offset: Optional[int] = Field(default=None, description="Kafka message offset")
+    failure_category: str = Field(description="Error classification: PERMANENT_SCHEMA_ERROR, TRANSIENT_NEO4J_ERROR, etc.")
+    sanitized_error: str = Field(description="Sanitized exception explanation without sensitive credentials")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    retry_count: int = Field(default=0, description="Total retry attempts executed before dead-lettering")
+    raw_payload: Optional[Dict[str, Any]] = Field(default=None, description="Safely encoded event content")
+
+
+class SecurityFindingRecord(BaseModel):
+    """Normalized security finding produced by event-triggered GraphOps analytics."""
+    finding_id: str = Field(description="Unique finding identifier")
+    source_event_id: str = Field(description="Originating Kafka security event identifier")
+    analysis_type: str = Field(
+        description="Analytics engine: DIJKSTRA_SHORTEST_PATH, BFS_BLAST_RADIUS, ATTACK_PATH_DISCOVERY, CHOKE_POINT, ANOMALY_DETECTION"
+    )
+    affected_entity_id: str = Field(description="Primary compromised or anomalous entity canonical ID")
+    critical_asset_impacted: Optional[str] = Field(
+        default=None,
+        description="Designated Crown Jewel exposed or targeted"
+    )
+    severity: CriticalityTier = Field(description="Normalized finding severity rating")
+    title: str = Field(description="Concise finding headline")
+    summary: str = Field(description="Actionable executive summary for SOC analysts")
+    details: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured algorithmic output (hops, paths, costs, anomaly scores, steps)"
+    )
+    evidence_class: EvidenceClass = Field(
+        default=EvidenceClass.OBSERVED,
+        description="Epistemological certainty: OBSERVED, AUTHORIZED_ACCESS, INFERRED, HYPOTHETICAL"
+    )
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class EventPublishResponse(BaseModel):
+    """Response returned when an event is accepted by the Kafka producer interface."""
+    event_id: str
+    status: str = Field(description="ACCEPTED_FOR_STREAMING or REJECTED")
+    topic: str
+    partition: Optional[int] = None
+    offset: Optional[int] = None
+    delivery_timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    message: str = Field(default="Security event successfully published to streaming topic.")
+
+
+class KafkaServiceStatus(BaseModel):
+    """Operational health diagnostics for Kafka producer and consumer workers."""
+    broker_connected: bool
+    bootstrap_servers: str
+    consumer_worker_running: bool
+    active_consumer_group: str
+    processed_events_count: int
+    dead_letter_events_count: int
+    findings_generated_count: int
+    last_processed_timestamp: Optional[str] = None
+
+
+# =====================================================================
+# 11. SCIKIT-LEARN EVENT ANOMALY DETECTION CONTRACTS
+# =====================================================================
+
+class EventFeatureRecord(BaseModel):
+    """Normalized feature vector extracted from a security event and graph context."""
+    feature_schema_version: str = Field(default="1.0.0", description="Feature schema semantic version")
+    event_id: str = Field(description="Unique event identifier")
+    event_type: str = Field(description="Event domain category")
+    source_entity_id: str = Field(description="Originating actor or device ID")
+    target_entity_id: Optional[str] = Field(default=None, description="Target asset or resource ID")
+
+    # Numerical features
+    auth_failure_count: float = Field(default=0.0, ge=0.0, description="Recent failed logon attempts")
+    distinct_destinations: float = Field(default=0.0, ge=0.0, description="Distinct target assets contacted in window")
+    distinct_servers_contacted: float = Field(default=0.0, ge=0.0, description="Distinct server entities touched")
+    outbound_bytes: float = Field(default=0.0, ge=0.0, description="Data volume transferred in bytes")
+    traversal_cost: float = Field(default=1.0, ge=0.0, description="Relationship traversal friction cost")
+    port: float = Field(default=443.0, ge=0.0, le=65535.0, description="Target destination port")
+    historical_events_count: float = Field(default=0.0, ge=0.0, description="Historical observed events for entity")
+    is_new_destination: float = Field(default=0.0, ge=0.0, le=1.0, description="1.0 if destination unobserved in baseline")
+    asset_criticality_score: float = Field(default=0.0, ge=0.0, le=100.0, description="Criticality rating: Low=10, Med=40, High=70, Crit=100")
+
+    # Categorical features
+    source_label: str = Field(default="DEVICE", description="NodeLabel of originating entity")
+    target_label: str = Field(default="SERVER", description="NodeLabel of target entity")
+    protocol: str = Field(default="TCP", description="Observed network/session protocol")
+
+    # Contextual metadata
+    historical_context_available: bool = Field(default=True, description="Whether historical baseline exists for entity")
+    insufficient_context: bool = Field(default=False, description="True if essential telemetry fields are missing")
+    extraction_warnings: List[str] = Field(default_factory=list, description="Warnings encountered during extraction")
+
+
+class EventAnomalyPrediction(BaseModel):
+    """Output contract produced by scikit-learn Isolation Forest model inference."""
+    event_id: str = Field(description="Evaluated security event ID")
+    is_anomaly: bool = Field(description="True if raw score is below configured threshold")
+    anomaly_classification: str = Field(description="NORMAL, ANOMALY, or INSUFFICIENT_CONTEXT")
+    raw_score: float = Field(description="Raw decision_function anomaly score from Isolation Forest")
+    normalized_score: float = Field(description="Calibrated anomaly severity rating from 0.0 (normal) to 100.0 (extreme anomaly)")
+    threshold: float = Field(description="Decision threshold used for classification")
+    model_name: str = Field(default="IsolationForest", description="Machine learning algorithm name")
+    model_version: str = Field(description="Trained model artifact semantic version")
+    feature_schema_version: str = Field(default="1.0.0", description="Feature contract version")
+    insufficient_context: bool = Field(default=False, description="True if inference was skipped due to cold start or missing fields")
+    historical_context_status: str = Field(default="SUFFICIENT", description="SUFFICIENT, COLD_START_INSUFFICIENT, or UNKNOWN")
+    rationale: str = Field(description="Interpretable narrative explanation of anomaly score")
+    feature_vector: Dict[str, Any] = Field(default_factory=dict, description="Feature attributes supplied to model")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class MLModelStatus(BaseModel):
+    """Operational health and provenance metadata for the active scikit-learn model."""
+    model_loaded: bool = Field(description="Whether a trained pipeline artifact is loaded in memory")
+    model_name: str = Field(default="IsolationForest")
+    model_version: str = Field(description="Active model semantic version")
+    feature_schema_version: str = Field(default="1.0.0")
+    model_path: str = Field(description="Filesystem path of persisted model artifact")
+    contamination: float = Field(description="Expected outlier proportion parameter")
+    threshold: float = Field(description="Active decision boundary threshold")
+    training_timestamp: Optional[str] = None
+    training_sample_count: Optional[int] = None
+    evaluation_metrics: Optional[Dict[str, Any]] = None
+
+
+class MLTrainResponse(BaseModel):
+    """Response returned upon completing controlled model training."""
+    status: str = Field(description="SUCCESS or FAILED")
+    model_version: str
+    training_samples: int
+    validation_samples: int
+    test_samples: int
+    threshold: float
+    metrics: Dict[str, Any] = Field(description="Precision, Recall, F1, FPR, Confusion Matrix")
+    artifact_path: str
+    message: str
+
+
+# =====================================================================
+# 12. PYTORCH GEOMETRIC (PYG) GRAPH LEARNING CONTRACTS
+# =====================================================================
+
+class GraphStructureAnomalyResult(BaseModel):
+    """
+    Structured outcome of PyTorch Geometric link-prediction inference,
+    scoring the structural plausibility / anomaly of a candidate relationship.
+    """
+    model_name: str = Field(default="StructuralGraphSAGE", description="PyG neural network architecture")
+    model_version: str = Field(default="1.0.0", description="Semantic model version")
+    model_available: bool = Field(default=True, description="Whether PyG model was loaded and evaluated")
+    prediction_type: str = Field(
+        default="RELATIONSHIP_PLAUSIBILITY_ANOMALY",
+        description="Graph-learning task: RELATIONSHIP_PLAUSIBILITY_ANOMALY or SUBGRAPH_ANOMALY"
+    )
+    is_anomaly: bool = Field(default=False, description="True if structural anomaly score exceeds decision threshold")
+    structural_anomaly_score: float = Field(
+        ge=0.0,
+        le=100.0,
+        description="Bounded anomaly rating: 0.0 (highly expected) to 100.0 (structurally anomalous/unexpected)"
+    )
+    predicted_plausibility: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Raw predicted link probability from GNN edge decoder (0.0 to 1.0)"
+    )
+    threshold: float = Field(default=60.0, description="Decision threshold applied")
+    score_interpretation: str = Field(
+        description="Interpretation category: EXPECTED_TOPOLOGY, ELEVATED_STRUCTURAL_RISK, UNUSUAL_ACCESS_PATH, or MODEL_UNAVAILABLE"
+    )
+    source_entity_id: str = Field(description="Canonical source node ID")
+    target_entity_id: str = Field(description="Canonical target node ID")
+    relationship_type: str = Field(description="Relationship label e.g. OBSERVED_CONNECTION, LOGGED_IN_TO")
+    graph_snapshot_id: str = Field(default="live_snapshot", description="Snapshot ID or provenance marker")
+    supporting_context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Topological context: common neighbors, path distance, entity labels, node degrees"
+    )
+    reason_codes: List[str] = Field(
+        default_factory=list,
+        description="List of explainable structural factor codes"
+    )
+    limitations: List[str] = Field(
+        default_factory=list,
+        description="Explicit methodological limitations (e.g. static snapshot, unobserved historical period)"
+    )
+    scored_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat(),
+        description="ISO 8601 UTC timestamp of inference"
+    )
+
+
+class PyGEvaluateRequest(BaseModel):
+    """Request payload to evaluate structural anomaly of a candidate relationship."""
+    source_entity_id: str = Field(description="Originating node ID e.g. user:victim1@corporation.com or device:dev-ws-101")
+    target_entity_id: str = Field(description="Target destination node ID e.g. server:srv-db-01")
+    relationship_type: str = Field(default="OBSERVED_CONNECTION", description="Relationship type")
+    traversal_cost: float = Field(default=1.0, ge=0.0, description="Friction / traversal cost")
+    evidence_class: str = Field(default="OBSERVED", description="OBSERVED or AUTHORIZED_ACCESS")
+    properties: Dict[str, Any] = Field(default_factory=dict, description="Additional relationship properties")
+
+
+class PyGModelStatus(BaseModel):
+    """Operational health, configuration, and evaluation metadata for PyG graph model."""
+    model_loaded: bool = Field(description="Whether PyG model weights are loaded and ready in memory")
+    model_name: str = Field(default="StructuralGraphSAGE")
+    model_version: str = Field(default="1.0.0")
+    device: str = Field(default="cpu", description="Execution device: cpu or cuda")
+    model_path: str = Field(description="Filesystem location of persisted .pt weights")
+    meta_path: str = Field(description="Filesystem location of metadata JSON")
+    num_nodes: int = Field(default=0, description="Number of nodes in the graph snapshot")
+    num_edges: int = Field(default=0, description="Number of edges in the graph snapshot")
+    embedding_dim: int = Field(default=64)
+    hidden_dim: int = Field(default=64)
+    threshold: float = Field(default=60.0)
+    training_timestamp: Optional[str] = None
+    evaluation_metrics: Optional[Dict[str, Any]] = None
+    limitations: List[str] = Field(default_factory=list)
+
+
+class PyGTrainResponse(BaseModel):
+    """Response returned upon completing PyG model training and evaluation."""
+    status: str = Field(description="SUCCESS or FAILED")
+    model_version: str
+    num_nodes: int
+    num_edges: int
+    train_edges: int
+    val_edges: int
+    test_edges: int
+    threshold: float
+    metrics: Dict[str, Any] = Field(description="ROC-AUC, Average Precision, F1, Precision, Recall, Confusion Matrix")
+    artifact_path: str
+    message: str
+
 

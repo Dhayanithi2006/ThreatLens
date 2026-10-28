@@ -6,6 +6,7 @@ a simulation-friendly interface for in-memory containment testing.
 """
 
 from datetime import datetime, timezone
+import time
 import uuid
 from typing import Dict, List, Optional, Any, Set, Tuple
 import logging
@@ -33,22 +34,35 @@ from backend.models.graphops import (
     ContainmentSimulationResult,
     CaseBridgeResponse,
     BridgeMappingItem,
+    DijkstraShortestPathRequest,
+    DijkstraShortestPathResult,
 )
 from backend.graphops.client import Neo4jClient, get_graphops_client, GraphOpsConnectionError
 from backend.graphops.blast_radius import NodeNotFoundError, BlastRadiusService
+from backend.graphops.dijkstra import DijkstraShortestPathEngine
 
 logger = logging.getLogger("threatlens.graphops.attack_paths")
+
+
+class CaseNotFoundError(ValueError):
+    """Raised when an email investigation case does not exist in the case repository."""
+    pass
 
 # Explicitly documented relationship types eligible for lateral movement traversal
 PATH_ELIGIBLE_RELATIONSHIPS: Set[RelationshipType] = {
     RelationshipType.USES,
     RelationshipType.LOGGED_IN_TO,
+    RelationshipType.AUTHENTICATED_TO,
     RelationshipType.OBSERVED_CONNECTION,
     RelationshipType.HAS_PERMISSION,
     RelationshipType.HOSTS,
+    RelationshipType.HOSTED_ON,
     RelationshipType.CONTAINS_CRITICAL_DATA,
     RelationshipType.POTENTIAL_EXPLOIT,
+    RelationshipType.EXPLOITS,
     RelationshipType.RUNS_ON,
+    RelationshipType.CONNECTS_TO,
+    RelationshipType.CAN_REACH,
 }
 
 MAX_PATHS_LIMIT = 50
@@ -63,6 +77,7 @@ class AttackPathService:
     def __init__(self, client: Optional[Neo4jClient] = None):
         self.client = client or get_graphops_client()
         self.blast_service = BlastRadiusService(self.client)
+        self.dijkstra_engine = DijkstraShortestPathEngine(self.client)
 
     def _resolve_target_asset_ids(self, requested_target_ids: Optional[List[str]]) -> List[str]:
         """
@@ -227,8 +242,10 @@ class AttackPathService:
             # Check if any edge is disabled
             has_disabled_edge = False
             for r in p_rels:
-                edge_key = (r["source_id"], r["target_id"], r["type"])
-                if edge_key in disabled_edge_keys:
+                src_l = r["source_id"].lower()
+                tgt_l = r["target_id"].lower()
+                rel_t = r["type"]
+                if (src_l, tgt_l, rel_t) in disabled_edge_keys or (src_l, tgt_l, "") in disabled_edge_keys:
                     has_disabled_edge = True
                     break
             if has_disabled_edge:
@@ -237,6 +254,22 @@ class AttackPathService:
             filtered_records.append(rec)
 
         return filtered_records
+
+    def find_dijkstra_shortest_path(
+        self,
+        request: DijkstraShortestPathRequest,
+        disabled_node_ids: Optional[Set[str]] = None,
+        disabled_edge_keys: Optional[Set[Tuple[str, str, str]]] = None,
+    ) -> DijkstraShortestPathResult:
+        """
+        Calculates the genuine minimum-cost candidate attack route using Dijkstra weighted shortest-path algorithm.
+        Supports multiple target assets, per-edge cost breakdown, and What-If containment exclusions.
+        """
+        return self.dijkstra_engine.find_shortest_path(
+            request=request,
+            disabled_node_ids=disabled_node_ids,
+            disabled_edge_keys=disabled_edge_keys,
+        )
 
     def find_attack_paths(
         self,
@@ -248,6 +281,7 @@ class AttackPathService:
         Discovers candidate attack paths from entry point to target critical assets.
         Supports in-memory simulation by filtering out disabled nodes or edges.
         """
+        start_time = time.perf_counter()
         disabled_nodes = {nid.lower() for nid in (disabled_node_ids or set())}
         disabled_edges = {(src.lower(), tgt.lower(), rt) for src, tgt, rt in (disabled_edge_keys or set())}
 
@@ -255,11 +289,14 @@ class AttackPathService:
         entry_node = self.blast_service.resolve_start_node(request.entry_node_id)
         if entry_node.id.lower() in disabled_nodes:
             # Entry node itself is isolated in simulation
+            calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
             return AttackPathResult(
                 entry_node=entry_node,
                 total_paths_discovered=0,
                 paths=[],
                 targets_reached=[],
+                calculation_time_ms=calc_time_ms,
+                warnings=["Entry node is isolated under simulated containment."],
                 methodology_note="Entry node is isolated under simulated containment.",
             )
 
@@ -293,6 +330,11 @@ class AttackPathService:
             raw_nodes = rec["path_nodes"]
             raw_rels = rec["path_relationships"]
 
+            # Cycle defense: ensure simple acyclic paths (no repeated nodes)
+            raw_node_ids = [n.get("id") for n in raw_nodes if n.get("id")]
+            if len(raw_node_ids) != len(set(raw_node_ids)):
+                continue
+
             path_nodes: List[EnterpriseNode] = [
                 self.blast_service._record_to_enterprise_node(
                     labels=n.get("labels", []),
@@ -315,7 +357,13 @@ class AttackPathService:
                 src_id = r["source_id"]
                 tgt_id = r["target_id"]
                 rel_type = RelationshipType(r["type"])
-                ev_class = EvidenceClass(r["evidence_class"])
+                try:
+                    ev_class = EvidenceClass(r["evidence_class"])
+                except (ValueError, KeyError):
+                    if str(r.get("evidence_class", "")).upper() == "AUTHORIZED":
+                        ev_class = EvidenceClass.AUTHORIZED_ACCESS
+                    else:
+                        ev_class = EvidenceClass.OBSERVED
                 rel_props = r.get("properties", {})
 
                 if ev_class == EvidenceClass.OBSERVED:
@@ -375,11 +423,22 @@ class AttackPathService:
         # Sort paths by risk_score descending, then length ascending
         discovered_paths.sort(key=lambda p: (-p.risk_score, p.length))
 
+        calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+        warnings = [
+            f"Bounded search: Path discovery depth constrained to max_depth={request.max_depth} (limit: {MAX_PATHS_LIMIT} paths)."
+        ]
+        if request.include_hypothetical:
+            warnings.append(
+                "Hypothetical exploit preconditions included; paths represent modeled exposure, not confirmed traversal."
+            )
+
         return AttackPathResult(
             entry_node=entry_node,
             total_paths_discovered=len(discovered_paths),
             paths=discovered_paths,
             targets_reached=sorted(list(targets_reached)),
+            calculation_time_ms=calc_time_ms,
+            warnings=warnings,
             methodology_note=(
                 "Candidate paths discovered via bounded graph search. "
                 "Calculated risk reflects target impact, step evidence certainty, and pivot friction. "
@@ -467,9 +526,11 @@ class AttackPathService:
             elif action == InterventionAction.PATCH_VULNERABILITY:
                 action_verb = "Patching"
 
+            alternate_count = total_paths - traversed_count
+            alt_text = f" ({alternate_count} alternative paths remain active.)" if alternate_count > 0 else " (Eliminates all candidate paths to these assets.)"
             details = (
                 f"{action_verb} {ent_id} eliminates {traversed_count} of {total_paths} candidate attack path(s) ({pct}%), "
-                f"protecting {len(assets)} Crown Jewel(s): {', '.join(assets)}."
+                f"protecting {len(assets)} Crown Jewel(s): {', '.join(assets)}.{alt_text}"
             )
 
             candidates.append(
@@ -662,65 +723,70 @@ class AttackPathService:
         and isolates external attacker IOCs under unmapped_external_iocs.
         """
         clean_cid = case_id.strip()
-        recipient_email = "victim1@corporation.com"
-        external_iocs = ["185.190.140.22", "alert-center.xyz"]
+        from backend.services.case_store import default_case_repo
+        case = default_case_repo.get_case(clean_cid)
+        if not case:
+            raise CaseNotFoundError(f"Case '{clean_cid}' was not found in the investigation case repository.")
 
-        try:
-            from backend.services.case_store import default_case_repo
-            case = default_case_repo.get_case(clean_cid)
-            if case:
-                if hasattr(case, "recipient") and case.recipient:
-                    recipient_email = case.recipient
-                elif hasattr(case, "forensics") and case.forensics and hasattr(case.forensics, "recipient") and case.forensics.recipient:
-                    recipient_email = case.forensics.recipient
-                if hasattr(case, "iocs") and case.iocs:
-                    ext = []
-                    for ioc_list in case.iocs.values():
-                        for val in ioc_list:
-                            if not val.endswith("@corporation.com") and not val.startswith("10."):
-                                ext.append(val)
-                    if ext:
-                        external_iocs = list(set(ext))
-        except Exception as e:
-            logger.warning(f"Could not load case from case_store: {e}")
+        recipient_email = case.recipient
+        if not recipient_email:
+            if hasattr(case, "forensics") and case.forensics and hasattr(case.forensics, "recipient") and case.forensics.recipient:
+                recipient_email = case.forensics.recipient
+
+        external_iocs = []
+        if hasattr(case, "iocs") and case.iocs:
+            ext = []
+            for ioc_list in case.iocs.values():
+                for val in ioc_list:
+                    if not val.endswith("@corporation.com") and not val.startswith("10."):
+                        ext.append(val)
+            if ext:
+                external_iocs = list(set(ext))
 
         primary_node = None
         mapped_entities: List[BridgeMappingItem] = []
-        try:
-            user_node = self.blast_service.resolve_start_node(recipient_email)
-            primary_node = user_node
-            mapped_entities.append(
-                BridgeMappingItem(
-                    evidence_type="RECIPIENT_EMAIL",
-                    raw_value=recipient_email,
-                    mapped_node_id=user_node.id,
-                    node_label=user_node.label,
-                    match_confidence=1.0,
-                    match_rationale="Exact Active Directory email address match.",
-                )
-            )
-
-            records = self.client.execute_query(
-                "MATCH (u {id: $uid})-[:USES]->(d) RETURN d.id AS id, labels(d) AS labels, properties(d) AS properties LIMIT 1",
-                {"uid": user_node.id},
-            )
-            if records:
-                dev_rec = records[0]
-                dev_id = dev_rec["id"]
+        if recipient_email:
+            try:
+                user_node = self.blast_service.resolve_start_node(recipient_email)
+                primary_node = user_node
                 mapped_entities.append(
                     BridgeMappingItem(
-                        evidence_type="ASSIGNED_DEVICE",
-                        raw_value=dev_rec.get("properties", {}).get("hostname", dev_id),
-                        mapped_node_id=dev_id,
-                        node_label=NodeLabel.DEVICE,
+                        evidence_type="RECIPIENT_EMAIL",
+                        raw_value=recipient_email,
+                        mapped_node_id=user_node.id,
+                        node_label=user_node.label,
                         match_confidence=1.0,
-                        match_rationale="Active corporate device assignment for user.",
+                        match_rationale="Exact Active Directory email address match.",
                     )
                 )
-        except Exception as e:
-            logger.warning(f"Could not resolve recipient to graph: {e}")
 
-        blast_url = f"/api/v1/graphops/blast-radius?start_node_id={primary_node.id if primary_node else recipient_email}"
+                records = self.client.execute_query(
+                    "MATCH (u {id: $uid})-[:USES]->(d) RETURN d.id AS id, labels(d) AS labels, properties(d) AS properties LIMIT 1",
+                    {"uid": user_node.id},
+                )
+                if records:
+                    dev_rec = records[0]
+                    dev_id = dev_rec["id"]
+                    mapped_entities.append(
+                        BridgeMappingItem(
+                            evidence_type="ASSIGNED_DEVICE",
+                            raw_value=dev_rec.get("properties", {}).get("hostname", dev_id),
+                            mapped_node_id=dev_id,
+                            node_label=NodeLabel.DEVICE,
+                            match_confidence=1.0,
+                            match_rationale="Active corporate device assignment for user (NOTE: receipt of email indicates potential exposure, not confirmed device compromise).",
+                        )
+                    )
+            except NodeNotFoundError:
+                logger.info(f"Recipient {recipient_email} not found in enterprise graph directory.")
+                if recipient_email not in external_iocs:
+                    external_iocs.append(recipient_email)
+            except Exception as e:
+                logger.warning(f"Could not resolve recipient to graph: {e}")
+                if recipient_email not in external_iocs:
+                    external_iocs.append(recipient_email)
+
+        blast_url = f"/api/v1/graphops/blast-radius?start_node_id={primary_node.id if primary_node else (recipient_email or clean_cid)}"
 
         return CaseBridgeResponse(
             case_id=clean_cid,

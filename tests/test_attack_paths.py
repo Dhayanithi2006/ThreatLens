@@ -21,6 +21,9 @@ from backend.models.graphops import (
     AttackPathResult,
     ChokePointRequest,
     ChokePointResult,
+    ProposedIntervention,
+    ContainmentSimulationRequest,
+    ContainmentSimulationResult,
 )
 from backend.graphops.attack_paths import (
     AttackPathService,
@@ -42,6 +45,7 @@ class InMemoryAttackPathGraphClient:
 
     def __init__(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
         self.nodes = {n["id"].lower(): n for n in nodes}
+        self.executed_queries: List[str] = []
         self.aliases: Dict[str, str] = {}
         for n in nodes:
             nid = n["id"].lower()
@@ -57,6 +61,7 @@ class InMemoryAttackPathGraphClient:
         self.edges = edges
 
     def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        self.executed_queries.append(query)
         params = params or {}
         q = query.strip()
 
@@ -172,6 +177,7 @@ def build_enterprise_fixture_mock() -> InMemoryAttackPathGraphClient:
         "vulnerabilities": [NodeLabel.VULNERABILITY.value],
         "critical_assets": [NodeLabel.CRITICAL_ASSET.value],
         "security_events": [NodeLabel.SECURITY_EVENT.value],
+        "email_accounts": [NodeLabel.EMAIL_ACCOUNT.value],
     }
 
     prefix_map = {
@@ -183,6 +189,7 @@ def build_enterprise_fixture_mock() -> InMemoryAttackPathGraphClient:
         "vulnerabilities": "vuln",
         "critical_assets": "critical",
         "security_events": "event",
+        "email_accounts": "email",
     }
 
     for category, entity_list in fixture["entities"].items():
@@ -581,3 +588,91 @@ def test_fastapi_attack_paths_not_found_returns_404():
         assert "does not exist" in response.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_graphops_client, None)
+
+
+def test_attack_paths_timing_and_bounded_warnings():
+    """
+    Phase 3: Verifies that attack path discovery returns calculation time in milliseconds
+    and explicit warnings regarding bounded depth and hypothetical exploit models.
+    """
+    client = build_enterprise_fixture_mock()
+    service = AttackPathService(client)
+
+    req = AttackPathRequest(
+        entry_node_id="device:dev-ws-101",
+        target_node_ids=["critical:crit-db-financial"],
+        max_depth=5,
+        include_hypothetical=True,
+    )
+    result = service.find_attack_paths(req)
+
+    assert result.calculation_time_ms is not None
+    assert result.calculation_time_ms >= 0.0
+    assert len(result.warnings) >= 1
+    assert any("Bounded search: Path discovery depth constrained to max_depth=5" in w for w in result.warnings)
+    assert any("Hypothetical exploit preconditions included" in w for w in result.warnings)
+
+
+def test_choke_point_alternative_paths_details():
+    """
+    Phase 3: Verifies that choke-point analysis explicitly documents active alternative
+    paths rather than assuming that remediating a choke point eliminates all risk.
+    """
+    client = build_enterprise_fixture_mock()
+    service = AttackPathService(client)
+
+    req = AttackPathRequest(
+        entry_node_id="device:dev-ws-101",
+        target_node_ids=["critical:crit-db-financial"],
+        max_depth=5,
+        include_hypothetical=True,
+    )
+    path_result = service.find_attack_paths(req)
+    assert path_result.total_paths_discovered >= 1
+
+    choke_res = service.analyze_choke_points(path_result.paths, top_n=5)
+    assert len(choke_res.choke_points) >= 1
+
+    for cp in choke_res.choke_points:
+        if cp.paths_traversed_count < choke_res.total_paths_analyzed:
+            rem = choke_res.total_paths_analyzed - cp.paths_traversed_count
+            assert f"{rem} alternative paths remain active." in cp.intervention_details
+        else:
+            assert "Eliminates all candidate paths to these assets." in cp.intervention_details
+
+
+def test_containment_simulation_safety_and_graph_immutability():
+    """
+    Phase 3: Proves through testing that What-If containment simulations execute purely
+    in memory and execute zero mutation (CREATE, SET, DELETE, MERGE, REMOVE) queries
+    against the graph client.
+    """
+    client = build_enterprise_fixture_mock()
+    service = AttackPathService(client)
+
+    req = ContainmentSimulationRequest(
+        entry_node_id="device:dev-ws-101",
+        target_asset_ids=["critical:crit-db-financial"],
+        proposed_interventions=[
+            ProposedIntervention(
+                action=InterventionAction.ISOLATE_NODE,
+                node_id="server:srv-app-01",
+                rationale="Isolate intermediary application server",
+            )
+        ],
+    )
+
+    client.executed_queries.clear()
+    sim_result = service.simulate_containment(req)
+
+    # 1. Result guarantees live graph was not modified
+    assert sim_result.live_graph_modified is False
+    assert "SIMULATION ONLY" in sim_result.safety_disclaimer
+
+    # 2. None of the queries executed during simulation contain write mutations
+    mutation_keywords = ["CREATE ", "MERGE ", "DELETE ", "SET ", "REMOVE "]
+    for query in client.executed_queries:
+        upper_q = query.upper()
+        for kw in mutation_keywords:
+            assert kw not in upper_q, f"Unexpected mutation keyword '{kw}' found in query: {query}"
+

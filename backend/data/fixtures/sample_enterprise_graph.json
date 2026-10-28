@@ -273,6 +273,58 @@
         "impact_score": 90,
         "data_classification": "CONFIDENTIAL",
         "owner_department": "Compliance"
+      },
+      {
+        "id": "CRIT-AIRGAPPED-VAULT",
+        "asset_id": "CRIT-AIRGAPPED-VAULT",
+        "name": "Offline Air-Gapped Cold Storage Key Vault",
+        "category": "CREDENTIAL_STORE",
+        "impact_score": 100,
+        "data_classification": "TOP_SECRET",
+        "owner_department": "Security Operations",
+        "data": { "provenance": "SIMULATED_HSM_CATALOG", "airgapped": true }
+      }
+    ],
+    "email_accounts": [
+      {
+        "id": "email:victim1@corporation.com",
+        "email_address": "victim1@corporation.com",
+        "account_name": "Alice Vance",
+        "domain": "corporation.com",
+        "mailbox_type": "USER",
+        "is_internal": true,
+        "is_compromised": true,
+        "data": { "provenance": "SIMULATED_EXCHANGE_ONLINE" }
+      },
+      {
+        "id": "email:victim2@corporation.com",
+        "email_address": "victim2@corporation.com",
+        "account_name": "Bob Martinez",
+        "domain": "corporation.com",
+        "mailbox_type": "USER",
+        "is_internal": true,
+        "is_compromised": false,
+        "data": { "provenance": "SIMULATED_EXCHANGE_ONLINE" }
+      },
+      {
+        "id": "email:accounting@corporation.com",
+        "email_address": "accounting@corporation.com",
+        "account_name": "Dana Miller",
+        "domain": "corporation.com",
+        "mailbox_type": "USER",
+        "is_internal": true,
+        "is_compromised": false,
+        "data": { "provenance": "SIMULATED_EXCHANGE_ONLINE" }
+      },
+      {
+        "id": "email:ceo@corporation.com",
+        "email_address": "ceo@corporation.com",
+        "account_name": "James Vance",
+        "domain": "corporation.com",
+        "mailbox_type": "USER",
+        "is_internal": true,
+        "is_compromised": false,
+        "data": { "provenance": "SIMULATED_EXCHANGE_ONLINE" }
       }
     ],
     "security_events": [
@@ -333,6 +385,7 @@
         "provenance": "Core Firewall NetFlow Sensor",
         "timestamp": "2026-08-28T09:30:00Z",
         "confidence": 1.0,
+        "traversal_cost": 1.5,
         "properties": { "port": 443, "protocol": "TCP" }
       },
       {
@@ -343,6 +396,7 @@
         "provenance": "Core Firewall NetFlow Sensor",
         "timestamp": "2026-08-28T09:45:00Z",
         "confidence": 1.0,
+        "traversal_cost": 1.0,
         "properties": { "port": 443, "protocol": "TCP" }
       },
       {
@@ -420,6 +474,7 @@
         "provenance": "Database Gateway Connection Logs",
         "timestamp": "2026-08-28T10:00:00Z",
         "confidence": 1.0,
+        "traversal_cost": 2.0,
         "properties": { "port": 5432, "protocol": "TCP" }
       },
       {
@@ -430,6 +485,7 @@
         "provenance": "Kerberos TGS Audit Logs",
         "timestamp": "2026-08-28T09:00:00Z",
         "confidence": 1.0,
+        "traversal_cost": 3.5,
         "properties": { "port": 88, "protocol": "TCP" }
       },
       {
@@ -439,7 +495,8 @@
         "evidence_class": "OBSERVED",
         "provenance": "Data Classification Scanner",
         "timestamp": "2026-08-01T00:00:00Z",
-        "confidence": 1.0
+        "confidence": 1.0,
+        "traversal_cost": 0.5
       },
       {
         "source_id": "server:srv-db-01",
@@ -448,7 +505,8 @@
         "evidence_class": "OBSERVED",
         "provenance": "Data Classification Scanner",
         "timestamp": "2026-08-01T00:00:00Z",
-        "confidence": 1.0
+        "confidence": 1.0,
+        "traversal_cost": 1.0
       },
       {
         "source_id": "server:srv-dc-01",
@@ -457,7 +515,8 @@
         "evidence_class": "OBSERVED",
         "provenance": "ActiveDirectory Schema Root",
         "timestamp": "2026-01-01T00:00:00Z",
-        "confidence": 1.0
+        "confidence": 1.0,
+        "traversal_cost": 0.5
       },
       {
         "source_id": "server:srv-app-01",
@@ -476,7 +535,55 @@
         "provenance": "ThreatLens Attack Graph Modeler",
         "timestamp": "2026-08-28T10:30:00Z",
         "confidence": 0.85,
+        "traversal_cost": 0.8,
         "properties": { "via_cve": "CVE-2024-21413", "attack_vector": "Moniker Link NTLM Relay" }
+      },
+      {
+        "source_id": "device:dev-ws-201",
+        "target_id": "server:srv-db-01",
+        "relationship_type": "OBSERVED_CONNECTION",
+        "evidence_class": "OBSERVED",
+        "provenance": "Finance Internal Segment Firewall",
+        "timestamp": "2026-08-28T09:10:00Z",
+        "confidence": 1.0,
+        "traversal_cost": 2.0,
+        "properties": { "port": 5432, "protocol": "TCP" }
+      },
+      {
+        "source_id": "email:victim1@corporation.com",
+        "target_id": "event:evt-mt101-phish",
+        "relationship_type": "ASSOCIATED_WITH_CASE",
+        "evidence_class": "OBSERVED",
+        "provenance": "ThreatLens RFC 822 Email Header Ingestion",
+        "timestamp": "2026-08-28T10:15:00Z",
+        "confidence": 1.0
+      },
+      {
+        "source_id": "user:victim2@corporation.com",
+        "target_id": "email:victim2@corporation.com",
+        "relationship_type": "OWNS",
+        "evidence_class": "OBSERVED",
+        "provenance": "SIMULATED_EXCHANGE_ONLINE",
+        "timestamp": "2026-08-01T08:00:00Z",
+        "confidence": 1.0
+      },
+      {
+        "source_id": "user:accounting@corporation.com",
+        "target_id": "email:accounting@corporation.com",
+        "relationship_type": "OWNS",
+        "evidence_class": "OBSERVED",
+        "provenance": "SIMULATED_EXCHANGE_ONLINE",
+        "timestamp": "2026-08-01T08:00:00Z",
+        "confidence": 1.0
+      },
+      {
+        "source_id": "user:ceo@corporation.com",
+        "target_id": "email:ceo@corporation.com",
+        "relationship_type": "OWNS",
+        "evidence_class": "OBSERVED",
+        "provenance": "SIMULATED_EXCHANGE_ONLINE",
+        "timestamp": "2026-08-01T08:00:00Z",
+        "confidence": 1.0
       },
       {
         "source_id": "user:victim1@corporation.com",

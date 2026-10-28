@@ -8,6 +8,8 @@ and uses parameterized Cypher transactions with bounded batch sizes.
 from typing import Dict, List, Optional, Any, Set, Tuple
 from datetime import datetime, timezone
 import logging
+import csv
+import io
 from pydantic import ValidationError
 
 from backend.graphops.schema import (
@@ -15,6 +17,7 @@ from backend.graphops.schema import (
     RelationshipType,
     EvidenceClass,
     canonicalize_node_id,
+    get_node_label_from_id,
     VALID_RELATIONSHIP_ENDPOINTS,
 )
 from backend.models.graphops import (
@@ -26,7 +29,10 @@ from backend.models.graphops import (
     VulnerabilityNode,
     CriticalAssetNode,
     SecurityEventNode,
+    EmailAccountNode,
     EnterpriseRelationship,
+    EntityIngestRequest,
+    RelationshipIngestRequest,
     BulkIngestPayload,
     IngestSummaryResponse,
 )
@@ -145,6 +151,20 @@ class GraphOpsIngestionEngine:
                     "case_id": node.case_id or "",
                     "provenance": node.provenance,
                 }
+            elif label == NodeLabel.EMAIL_ACCOUNT:
+                node = EmailAccountNode(**raw_data)
+                domain = node.domain
+                if not domain and "@" in node.email_address:
+                    domain = node.email_address.split("@", 1)[1]
+                props = {
+                    "id": node.id,
+                    "email_address": node.email_address,
+                    "account_name": node.account_name or "",
+                    "domain": domain or "",
+                    "mailbox_type": node.mailbox_type,
+                    "is_internal": node.is_internal,
+                    "is_compromised": node.is_compromised,
+                }
             else:
                 return None, f"Unsupported entity label: {label}"
 
@@ -197,11 +217,36 @@ class GraphOpsIngestionEngine:
             err_msg = "; ".join(f"{err['loc'][0]}: {err['msg']}" for err in e.errors())
             return None, f"Relationship validation failed: {err_msg}"
 
-        # Reference verification: Ensure source and target endpoints exist
+        # Reference verification: Ensure source and target endpoints exist (with case-insensitive resolution)
+        known_lower_map = {k.lower(): k for k in known_node_ids}
         if rel.source_id not in known_node_ids:
-            return None, f"Unresolved relationship reference: source_id '{rel.source_id}' does not exist."
+            if rel.source_id.lower() in known_lower_map:
+                rel.source_id = known_lower_map[rel.source_id.lower()]
+            else:
+                return None, f"Unresolved relationship reference: source_id '{rel.source_id}' does not exist."
         if rel.target_id not in known_node_ids:
-            return None, f"Unresolved relationship reference: target_id '{rel.target_id}' does not exist."
+            if rel.target_id.lower() in known_lower_map:
+                rel.target_id = known_lower_map[rel.target_id.lower()]
+            else:
+                return None, f"Unresolved relationship reference: target_id '{rel.target_id}' does not exist."
+
+        # Endpoint typing verification: Ensure source and target entities match schema rules
+        if rel.relationship_type in VALID_RELATIONSHIP_ENDPOINTS:
+            allowed_sources, allowed_targets = VALID_RELATIONSHIP_ENDPOINTS[rel.relationship_type]
+            src_label = get_node_label_from_id(rel.source_id)
+            tgt_label = get_node_label_from_id(rel.target_id)
+            if src_label and src_label not in allowed_sources:
+                allowed_src_names = sorted([s.value for s in allowed_sources])
+                return None, (
+                    f"Invalid relationship endpoint typing: {rel.relationship_type.value} cannot originate from "
+                    f"'{src_label.value}' (source: '{rel.source_id}'). Allowed source types: {allowed_src_names}."
+                )
+            if tgt_label and tgt_label not in allowed_targets:
+                allowed_tgt_names = sorted([t.value for t in allowed_targets])
+                return None, (
+                    f"Invalid relationship endpoint typing: {rel.relationship_type.value} cannot target "
+                    f"'{tgt_label.value}' (target: '{rel.target_id}'). Allowed target types: {allowed_tgt_names}."
+                )
 
         props = {
             "id": rel.id,
@@ -214,6 +259,8 @@ class GraphOpsIngestionEngine:
             "timestamp": rel.timestamp or "",
             "confidence": rel.confidence,
         }
+        if rel.traversal_cost is not None:
+            props["traversal_cost"] = rel.traversal_cost
         if rel.properties:
             for k, v in rel.properties.items():
                 if isinstance(v, (str, int, float, bool)):
@@ -257,7 +304,8 @@ class GraphOpsIngestionEngine:
         except Exception as e:
             logger.warning(f"Could not pre-fetch existing node IDs (database may be empty or starting up): {e}")
 
-        # 1. Process & Validate Nodes
+        # 1. Process & Validate Nodes with intra-payload deduplication
+        seen_node_canonical_ids: Set[str] = set()
         entity_sources = [
             (NodeLabel.USER, payload.entities.users),
             (NodeLabel.DEVICE, payload.entities.devices),
@@ -267,6 +315,7 @@ class GraphOpsIngestionEngine:
             (NodeLabel.VULNERABILITY, payload.entities.vulnerabilities),
             (NodeLabel.CRITICAL_ASSET, payload.entities.critical_assets),
             (NodeLabel.SECURITY_EVENT, payload.entities.security_events),
+            (NodeLabel.EMAIL_ACCOUNT, payload.entities.email_accounts),
         ]
 
         for label, entity_list in entity_sources:
@@ -278,19 +327,32 @@ class GraphOpsIngestionEngine:
                     nodes_rejected += 1
                     errors.append(err)
                 else:
-                    validated_nodes_by_label[label.value].append(valid_node)
                     canonical_id = valid_node["id"]
-                    known_node_ids.add(canonical_id)
-                    # Register user email and ID aliases for clean reference resolution
-                    if label == NodeLabel.USER:
-                        email = item_dict.get("email")
-                        uid = item_dict.get("user_id")
-                        if email:
-                            id_aliases[f"user:{email.lower()}"] = canonical_id
-                            id_aliases[email.lower()] = canonical_id
-                        if uid:
-                            id_aliases[f"user:{uid.lower()}"] = canonical_id
-                            id_aliases[uid.lower()] = canonical_id
+                    if canonical_id in seen_node_canonical_ids:
+                        # Intra-payload duplicate node: update existing properties rather than sending duplicate UNWIND rows
+                        for existing_node in validated_nodes_by_label[label.value]:
+                            if existing_node["id"] == canonical_id:
+                                existing_node["properties"].update(valid_node["properties"])
+                                break
+                    else:
+                        seen_node_canonical_ids.add(canonical_id)
+                        validated_nodes_by_label[label.value].append(valid_node)
+                        known_node_ids.add(canonical_id)
+                        # Register user email and ID aliases for clean reference resolution
+                        if label == NodeLabel.USER:
+                            email = item_dict.get("email")
+                            uid = item_dict.get("user_id")
+                            if email:
+                                id_aliases[f"user:{email.lower()}"] = canonical_id
+                                id_aliases[email.lower()] = canonical_id
+                            if uid:
+                                id_aliases[f"user:{uid.lower()}"] = canonical_id
+                                id_aliases[uid.lower()] = canonical_id
+                        elif label == NodeLabel.EMAIL_ACCOUNT:
+                            email_addr = item_dict.get("email_address")
+                            if email_addr:
+                                id_aliases[f"email:{email_addr.lower()}"] = canonical_id
+                                id_aliases[email_addr.lower()] = canonical_id
 
         # Ingest nodes into Neo4j using bounded batches
         now_ts = datetime.now(timezone.utc).isoformat()
@@ -313,9 +375,10 @@ class GraphOpsIngestionEngine:
                 if counters.get("nodes_created", 0) < len(batch):
                     nodes_updated += (len(batch) - counters.get("nodes_created", 0))
 
-        # 2. Process & Validate Relationships
+        # 2. Process & Validate Relationships with intra-payload deduplication
         all_resolvable_ids = known_node_ids.union(id_aliases.keys())
         validated_rels_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        seen_rel_keys: Set[str] = set()
         for rel in payload.relationships.relationships:
             rel_dict = rel.model_dump() if hasattr(rel, "model_dump") else dict(rel)
             valid_rel, err = self.validate_relationship(rel_dict, all_resolvable_ids, id_aliases)
@@ -324,9 +387,20 @@ class GraphOpsIngestionEngine:
                 errors.append(err)
             else:
                 rel_type = valid_rel["type"]
+                rel_key = f"{valid_rel['source_id']}->{valid_rel['target_id']}:{rel_type}"
                 if rel_type not in validated_rels_by_type:
                     validated_rels_by_type[rel_type] = []
-                validated_rels_by_type[rel_type].append(valid_rel)
+
+                if rel_key in seen_rel_keys:
+                    # Intra-payload duplicate relationship: update properties on existing entry
+                    for existing_rel in validated_rels_by_type[rel_type]:
+                        existing_key = f"{existing_rel['source_id']}->{existing_rel['target_id']}:{existing_rel['type']}"
+                        if existing_key == rel_key:
+                            existing_rel["properties"].update(valid_rel["properties"])
+                            break
+                else:
+                    seen_rel_keys.add(rel_key)
+                    validated_rels_by_type[rel_type].append(valid_rel)
 
         # Ingest relationships into Neo4j using bounded batches
         for rel_type, rel_list in validated_rels_by_type.items():
@@ -364,6 +438,266 @@ class GraphOpsIngestionEngine:
             errors=errors,
             timestamp=now_ts,
         )
+
+    def parse_csv_entities(self, csv_text: str) -> EntityIngestRequest:
+        """
+        Parses CSV records into typed entity objects for bulk ingestion.
+        Supports columns: label (or inferred), id, name, and type-specific attributes.
+        """
+        reader = csv.DictReader(io.StringIO(csv_text.strip()))
+        req = EntityIngestRequest()
+        for raw_row in reader:
+            row = {k.strip(): v.strip() for k, v in raw_row.items() if k and v is not None}
+            if not row:
+                continue
+
+            # Determine label
+            label_val = row.pop("label", None)
+            if not label_val:
+                # Infer from characteristic columns
+                if "cve_id" in row:
+                    label_val = "Vulnerability"
+                elif "email_address" in row:
+                    label_val = "EmailAccount"
+                elif "impact_score" in row or "asset_id" in row:
+                    label_val = "CriticalAsset"
+                elif "tier" in row or "server_id" in row:
+                    label_val = "Server"
+                elif "os" in row or "device_id" in row:
+                    label_val = "Device"
+                elif "app_id" in row:
+                    label_val = "Application"
+                elif "ip" in row:
+                    label_val = "IPAddress"
+                elif "event_type" in row:
+                    label_val = "SecurityEvent"
+                elif "email" in row and ("role" in row or "department" in row):
+                    label_val = "User"
+                else:
+                    label_val = "User"
+
+            label_clean = label_val.strip().lower()
+
+            def to_bool(val: Any) -> bool:
+                return str(val).strip().lower() in ("true", "1", "yes")
+
+            def to_int(val: Any, default: int = 0) -> int:
+                try:
+                    return int(float(val))
+                except (ValueError, TypeError):
+                    return default
+
+            def to_float(val: Any, default: float = 0.0) -> float:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    return default
+
+            if label_clean in ("user", "nodelabel.user"):
+                req.users.append(UserNode(
+                    id=row.get("id", row.get("user_id", row.get("email", "unknown"))),
+                    user_id=row.get("user_id", row.get("id", "USR-000")),
+                    email=row.get("email", "unknown@corp.com"),
+                    name=row.get("name", "Unknown User"),
+                    department=row.get("department", "Unassigned"),
+                    role=row.get("role", "Standard User"),
+                    is_service_account=to_bool(row.get("is_service_account", False)),
+                    is_admin=to_bool(row.get("is_admin", False)),
+                    status=row.get("status", "ACTIVE"),
+                ))
+            elif label_clean in ("device", "nodelabel.device"):
+                req.devices.append(DeviceNode(
+                    id=row.get("id", row.get("device_id", "DEV-WS-000")),
+                    device_id=row.get("device_id", row.get("id", "DEV-WS-000")),
+                    hostname=row.get("hostname", "ws-unknown.corp"),
+                    ip_address=row.get("ip_address", "10.0.0.1"),
+                    mac_address=row.get("mac_address"),
+                    os=row.get("os", "Windows 11 Enterprise"),
+                    subnet=row.get("subnet"),
+                    is_isolated=to_bool(row.get("is_isolated", False)),
+                ))
+            elif label_clean in ("server", "nodelabel.server"):
+                req.servers.append(ServerNode(
+                    id=row.get("id", row.get("server_id", "SRV-000")),
+                    server_id=row.get("server_id", row.get("id", "SRV-000")),
+                    name=row.get("name", "Server"),
+                    hostname=row.get("hostname", "srv.corp"),
+                    ip_address=row.get("ip_address", "10.0.0.2"),
+                    tier=row.get("tier", "Application"),
+                    environment=row.get("environment", "Production"),
+                    is_isolated=to_bool(row.get("is_isolated", False)),
+                ))
+            elif label_clean in ("application", "app", "nodelabel.application"):
+                req.applications.append(ApplicationNode(
+                    id=row.get("id", row.get("app_id", "APP-000")),
+                    app_id=row.get("app_id", row.get("id", "APP-000")),
+                    name=row.get("name", "Application"),
+                    version=row.get("version", "1.0.0"),
+                    port=to_int(row.get("port", 0)) if row.get("port") else None,
+                    service_type=row.get("service_type", "API"),
+                    environment=row.get("environment", "Production"),
+                ))
+            elif label_clean in ("ipaddress", "ip", "nodelabel.ip_address"):
+                req.ips.append(IpAddressNode(
+                    id=row.get("id", row.get("ip", "10.0.0.1")),
+                    ip=row.get("ip", row.get("id", "10.0.0.1")),
+                    version=to_int(row.get("version", 4)),
+                    scope=row.get("scope", "internal"),
+                    subnet=row.get("subnet"),
+                    is_monitored=to_bool(row.get("is_monitored", True)),
+                ))
+            elif label_clean in ("vulnerability", "vuln", "nodelabel.vulnerability"):
+                cve = (row.get("cve_id") or row.get("id") or "CVE-2024-0000").strip()
+                if not cve.upper().startswith("CVE-"):
+                    cve = f"CVE-2024-{cve}" if cve.isdigit() else "CVE-2024-0000"
+                cvss = to_float(row.get("cvss_score") or 5.0)
+                sev = (row.get("severity") or "").strip().upper()
+                if sev not in ("LOW", "MEDIUM", "HIGH", "CRITICAL"):
+                    if cvss >= 9.0:
+                        sev = "CRITICAL"
+                    elif cvss >= 7.0:
+                        sev = "HIGH"
+                    elif cvss >= 4.0:
+                        sev = "MEDIUM"
+                    else:
+                        sev = "LOW"
+                req.vulnerabilities.append(VulnerabilityNode(
+                    id=cve,
+                    cve_id=cve,
+                    cvss_score=cvss,
+                    severity=sev,
+                    description=row.get("description") or "",
+                    exploit_available=to_bool(row.get("exploit_available", False)),
+                    patch_available=to_bool(row.get("patch_available", True)),
+                ))
+            elif label_clean in ("criticalasset", "critical", "crit", "nodelabel.critical_asset"):
+                req.critical_assets.append(CriticalAssetNode(
+                    id=row.get("id", row.get("asset_id", "CRIT-000")),
+                    asset_id=row.get("asset_id", row.get("id", "CRIT-000")),
+                    name=row.get("name", "Critical Asset"),
+                    category=row.get("category", "CUSTOMER_PII"),
+                    impact_score=to_int(row.get("impact_score", 90)),
+                    data_classification=row.get("data_classification", "CONFIDENTIAL"),
+                    owner_department=row.get("owner_department", "IT Infrastructure"),
+                ))
+            elif label_clean in ("emailaccount", "email", "nodelabel.email_account"):
+                req.email_accounts.append(EmailAccountNode(
+                    id=row.get("id", row.get("email_address", "user@corp.com")),
+                    email_address=row.get("email_address", row.get("id", "user@corp.com")),
+                    account_name=row.get("account_name"),
+                    domain=row.get("domain"),
+                    mailbox_type=row.get("mailbox_type", "USER"),
+                    is_internal=to_bool(row.get("is_internal", True)),
+                    is_compromised=to_bool(row.get("is_compromised", False)),
+                ))
+            elif label_clean in ("securityevent", "event", "nodelabel.security_event"):
+                req.security_events.append(SecurityEventNode(
+                    id=row.get("id", row.get("event_id", "EVT-000")),
+                    event_id=row.get("event_id", row.get("id", "EVT-000")),
+                    event_type=row.get("event_type", "PHISHING_INCIDENT"),
+                    severity=row.get("severity", "HIGH"),
+                    timestamp=row.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    case_id=row.get("case_id"),
+                    provenance=row.get("provenance", "CSV Import"),
+                ))
+        return req
+
+    def parse_csv_relationships(self, csv_text: str) -> RelationshipIngestRequest:
+        """
+        Parses CSV records into EnterpriseRelationship models.
+        Supports columns: source_id, target_id, relationship_type, evidence_class,
+        traversal_cost, provenance, confidence, timestamp, etc.
+        """
+        reader = csv.DictReader(io.StringIO(csv_text.strip()))
+        req = RelationshipIngestRequest()
+        for raw_row in reader:
+            row = {k.strip(): v.strip() for k, v in raw_row.items() if k and v is not None}
+            if not row or "source_id" not in row or "target_id" not in row:
+                continue
+
+            cost = None
+            if "traversal_cost" in row and row["traversal_cost"]:
+                try:
+                    cost = float(row["traversal_cost"])
+                except ValueError:
+                    cost = None
+
+            conf = 1.0
+            if "confidence" in row and row["confidence"]:
+                try:
+                    conf = float(row["confidence"])
+                except ValueError:
+                    conf = 1.0
+
+            rel_type = row.get("relationship_type", row.get("type", "CONNECTS_TO"))
+            ev_class = row.get("evidence_class", "OBSERVED")
+
+            props = {}
+            reserved = {"source_id", "target_id", "relationship_type", "type", "evidence_class",
+                        "traversal_cost", "provenance", "confidence", "timestamp", "id", "source_record_id"}
+            for k, v in row.items():
+                if k not in reserved and v:
+                    props[k] = v
+
+            req.relationships.append(EnterpriseRelationship(
+                id=row.get("id"),
+                source_id=row["source_id"],
+                target_id=row["target_id"],
+                relationship_type=rel_type,
+                evidence_class=ev_class,
+                source_record_id=row.get("source_record_id"),
+                provenance=row.get("provenance", "CSV Ingestion"),
+                timestamp=row.get("timestamp"),
+                confidence=conf,
+                traversal_cost=cost,
+                properties=props,
+            ))
+        return req
+
+    def ingest_csv(
+        self,
+        csv_text: str,
+        dataset_name: str = "csv_import",
+        data_type: str = "auto",
+    ) -> IngestSummaryResponse:
+        """
+        Ingests CSV content containing either nodes or relationships into Neo4j.
+        Detects data type automatically from header columns if data_type='auto'.
+        """
+        clean_text = csv_text.strip()
+        if not clean_text:
+            return IngestSummaryResponse(
+                status="FAILED",
+                dataset_name=dataset_name,
+                errors=["Empty CSV content provided."],
+            )
+
+        first_line = clean_text.splitlines()[0].lower()
+        headers = [h.strip() for h in first_line.split(",")]
+
+        is_relationship_csv = (
+            data_type == "relationships"
+            or ("source_id" in headers and "target_id" in headers)
+        )
+
+        if is_relationship_csv:
+            rel_req = self.parse_csv_relationships(clean_text)
+            rel_req.dataset_name = dataset_name
+            payload = BulkIngestPayload(
+                dataset_name=dataset_name,
+                entities=EntityIngestRequest(dataset_name=dataset_name),
+                relationships=rel_req,
+            )
+        else:
+            ent_req = self.parse_csv_entities(clean_text)
+            ent_req.dataset_name = dataset_name
+            payload = BulkIngestPayload(
+                dataset_name=dataset_name,
+                entities=ent_req,
+                relationships=RelationshipIngestRequest(dataset_name=dataset_name),
+            )
+
+        return self.ingest_payload(payload)
 
     def ingest_sample_fixture(self) -> IngestSummaryResponse:
         """

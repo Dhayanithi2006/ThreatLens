@@ -159,6 +159,7 @@ def build_enterprise_fixture_mock() -> InMemoryGraphClient:
         "vulnerabilities": [NodeLabel.VULNERABILITY.value],
         "critical_assets": [NodeLabel.CRITICAL_ASSET.value],
         "security_events": [NodeLabel.SECURITY_EVENT.value],
+        "email_accounts": [NodeLabel.EMAIL_ACCOUNT.value],
     }
 
     prefix_map = {
@@ -170,6 +171,7 @@ def build_enterprise_fixture_mock() -> InMemoryGraphClient:
         "vulnerabilities": "vuln",
         "critical_assets": "critical",
         "security_events": "event",
+        "email_accounts": "email",
     }
 
     for category, entity_list in fixture["entities"].items():
@@ -582,4 +584,45 @@ def test_fastapi_blast_radius_invalid_filter_returns_422():
         assert response.status_code == 422
     finally:
         app.dependency_overrides.pop(get_graphops_client, None)
+
+
+def test_blast_radius_timing_and_bounded_warnings():
+    """
+    Phase 3: Verifies that blast radius calculations include execution time in milliseconds,
+    bounded depth warnings, and explicit distinction between reachable exposed entities
+    and confirmed compromises.
+    """
+    client = build_enterprise_fixture_mock()
+    service = BlastRadiusService(client)
+
+    req = BlastRadiusRequest(
+        start_node_id="device:dev-ws-101",
+        max_hops=3,
+        direction=TraversalDirection.OUTGOING,
+        include_hypothetical=True,
+    )
+    result = service.calculate_blast_radius(req)
+
+    # 1. Calculation time is populated
+    assert result.calculation_time_ms is not None
+    assert result.calculation_time_ms >= 0.0
+
+    # 2. Warnings include bounded depth
+    assert len(result.warnings) >= 1
+    assert any("Bounded traversal: Traversal reached maximum evaluation limit of 3 hops" in w for w in result.warnings)
+    assert any("Includes hypothetical attack transitions" in w for w in result.warnings)
+
+    # 3. Summary assessment distinguishes exposure from compromise
+    assert "Reachable assets represent architectural exposure, not confirmed compromise." in result.summary_assessment
+    assert "device:dev-ws-101" in result.summary_assessment
+
+    # 4. Hop 1, 2, 3 nodes are mutually disjoint (no entity counted multiple times)
+    hop1_ids = {n.id for n in result.hop_1.nodes}
+    hop2_ids = {n.id for n in result.hop_2.nodes}
+    hop3_ids = {n.id for n in result.hop_3.nodes}
+    assert hop1_ids.isdisjoint(hop2_ids)
+    assert hop1_ids.isdisjoint(hop3_ids)
+    assert hop2_ids.isdisjoint(hop3_ids)
+    assert result.total_reachable_nodes == len(hop1_ids) + len(hop2_ids) + len(hop3_ids)
+
 

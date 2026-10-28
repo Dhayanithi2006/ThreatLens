@@ -121,10 +121,14 @@ class CaseRepository:
         with self._lock:
             self._cases[case.case_id] = case
 
+    save = save_case
+
     def get_case(self, case_id: str) -> Optional[CaseRecord]:
         """Retrieves a single case by ID."""
         with self._lock:
             return self._cases.get(case_id)
+
+    get = get_case
 
     def list_cases(self) -> List[CaseRecord]:
         """Returns all indexed cases."""

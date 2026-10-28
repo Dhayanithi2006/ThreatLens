@@ -5,6 +5,7 @@ compromised entity with strict minimum-hop distances, cycle avoidance, evidence 
 critical-asset highlighting, and subgraph construction for Cytoscape.js visualization.
 """
 
+import time
 from typing import Dict, List, Optional, Any, Set, Tuple
 import logging
 
@@ -205,6 +206,8 @@ class BlastRadiusService:
         Guarantees minimum-hop distance, eliminates duplicate visits, identifies exposed
         Crown Jewels, and constructs a connected subgraph.
         """
+        start_time = time.perf_counter()
+
         # Validate depth boundary
         if request.max_hops < 1 or request.max_hops > 3:
             raise ValueError(f"max_hops must be between 1 and 3, received {request.max_hops}")
@@ -221,6 +224,19 @@ class BlastRadiusService:
 
         # Resolve initial compromise root entity
         start_node = self.resolve_start_node(request.start_node_id)
+
+        # Bounded traversal warnings
+        warnings: List[str] = []
+        if request.max_hops == 3:
+            warnings.append(
+                "Bounded traversal: Traversal reached maximum evaluation limit of 3 hops; "
+                "entities beyond 3 hops were not evaluated."
+            )
+        if request.include_hypothetical:
+            warnings.append(
+                "Includes hypothetical attack transitions (e.g. unpatched vulnerabilities). "
+                "Modeled paths indicate architectural exposure, not confirmed attacker traversal."
+            )
 
         # BFS state trackers
         visited_ids: Set[str] = {start_node.id}
@@ -362,6 +378,7 @@ class BlastRadiusService:
         )
 
         total_reachable = len(hop_nodes_map[1]) + len(hop_nodes_map[2]) + len(hop_nodes_map[3])
+        calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
 
         # Generate descriptive SOC analyst assessment
         summary_assessment = self._generate_summary_assessment(
@@ -386,6 +403,8 @@ class BlastRadiusService:
             subgraph_nodes=subgraph_nodes,
             subgraph_edges=list(subgraph_edges_map.values()),
             summary_assessment=summary_assessment,
+            calculation_time_ms=calc_time_ms,
+            warnings=warnings,
         )
 
     def _generate_summary_assessment(
@@ -435,8 +454,10 @@ class BlastRadiusService:
         else:
             lines.append("No designated Crown Jewel assets exposed within current traversal depth.")
 
+        lines.append("Reachable assets represent architectural exposure, not confirmed compromise.")
         return " ".join(lines)
 
 
 # Global default blast radius service instance
 default_blast_radius_service = BlastRadiusService()
+

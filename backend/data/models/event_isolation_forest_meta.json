@@ -1,0 +1,42 @@
+{
+  "model_name": "IsolationForest",
+  "model_version": "1.0.0",
+  "feature_schema_version": "1.0.0",
+  "contamination": 0.08,
+  "random_seed": 42,
+  "threshold": 0.0,
+  "training_timestamp": "2026-10-28T12:05:38.261204+00:00",
+  "training_sample_count": 979,
+  "validation_sample_count": 300,
+  "test_sample_count": 301,
+  "evaluation_metrics": {
+    "precision": 0.7826,
+    "recall": 1.0,
+    "f1_score": 0.878,
+    "false_positive_rate": 0.1185,
+    "confusion_matrix": {
+      "true_negatives": 186,
+      "false_positives": 25,
+      "false_negatives": 0,
+      "true_positives": 90
+    }
+  },
+  "numerical_features": [
+    "auth_failure_count",
+    "distinct_destinations",
+    "distinct_servers_contacted",
+    "outbound_bytes",
+    "traversal_cost",
+    "port",
+    "historical_events_count",
+    "is_new_destination",
+    "asset_criticality_score"
+  ],
+  "categorical_features": [
+    "event_type",
+    "source_label",
+    "target_label",
+    "protocol"
+  ],
+  "model_path": "backend/data/models/event_isolation_forest.joblib"
+}
