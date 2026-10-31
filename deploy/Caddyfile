@@ -1,0 +1,45 @@
+# ThreatLens Secure HTTPS Reverse Proxy — Caddy Configuration
+# Terminates TLS for remote Windows log collectors & web dashboard
+
+{
+    # Global options
+    admin off
+    auto_https disable_redirects
+}
+
+:443, localhost:443 {
+    # Self-signed local CA for development / internal labs
+    # In production, replace with: tls /etc/ssl/certs/threatlens.crt /etc/ssl/private/threatlens.key
+    tls internal
+
+    # Limit request body to 4MB (matches COLLECTOR_MAX_REQUEST_SIZE_BYTES)
+    request_body {
+        max_size 4MB
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # Proxy all traffic to FastAPI backend
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto https
+    }
+
+    log {
+        output file C:\ThreatLensCollector\caddy_access.log {
+            roll_size 20mb
+            roll_keep 5
+        }
+        format console
+    }
+}
+

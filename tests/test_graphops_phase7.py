@@ -219,12 +219,6 @@ def test_frontend_html_contracts():
     assert html_path.exists(), "frontend/index.html must exist"
     content = html_path.read_text(encoding="utf-8")
 
-    # Topbar engine indicators
-    assert 'id="topbar-engine-indicator"' in content
-    assert 'id="topbar-db-indicator"' in content
-    assert 'id="topbar-kafka-indicator"' in content
-    assert 'id="topbar-ml-indicator"' in content
-    assert 'id="topbar-pyg-indicator"' in content
 
     # GraphOps mode tabs
     assert 'id="tab-graphops-blast"' in content

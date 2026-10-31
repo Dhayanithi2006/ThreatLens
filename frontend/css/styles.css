@@ -1633,4 +1633,209 @@ textarea:focus-visible {
   }
 }
 
+/* =======================================================
+   OFFICIAL HACKATHON INCIDENT SCENARIO WALKTHROUGH BAR
+   ======================================================= */
+.scenario-walkthrough-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: linear-gradient(90deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.85));
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  margin-bottom: 1.25rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  position: relative;
+  overflow-x: auto;
+}
+
+.scenario-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.scenario-live-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #f87171;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+}
+
+.scenario-title {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #f8fafc;
+  white-space: nowrap;
+}
+
+.scenario-steps-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.scenario-step-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.scenario-step-pill:hover {
+  background: rgba(56, 189, 248, 0.1);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #f8fafc;
+}
+
+.scenario-step-pill.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: var(--brand-cyan);
+  color: #f8fafc;
+  box-shadow: 0 0 12px var(--brand-cyan-glow);
+}
+
+.scenario-step-pill .step-num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.scenario-step-pill.active .step-num {
+  background: var(--brand-cyan);
+  color: #07090e;
+}
+
+.scenario-step-pill .step-badge {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.scenario-step-pill.active .step-badge {
+  background: rgba(56, 189, 248, 0.25);
+  color: #7dd3fc;
+}
+
+.scenario-step-sep {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.btn-scenario-reset {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.btn-scenario-reset:hover {
+  border-color: var(--brand-amber);
+  color: var(--brand-amber);
+}
+
+/* 4-Pillar Navigation Subtitle Formatting */
+.nav-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.nav-sub {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.nav-item.active .nav-sub {
+  color: rgba(56, 189, 248, 0.7);
+}
+
+/* 65/35 Standardized Graph Workspace Split Layout */
+.graphops-workspace-split {
+  display: grid;
+  grid-template-columns: minmax(0, 65%) minmax(0, calc(35% - 16px));
+  gap: 16px;
+  align-items: start;
+  width: 100%;
+}
+
+.graphops-split-canvas {
+  width: 100%;
+  min-width: 0;
+}
+
+.graphops-split-sidebar {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+@media (max-width: 1080px) {
+  .graphops-workspace-split {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Scenario Walkthrough Details Drawer & Disclaimer */
+.scenario-details-expander {
+  display: block;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.scenario-disclaimer-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px dashed rgba(245, 158, 11, 0.35);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 0.74rem;
+  color: #fbbf24;
+  margin-top: 8px;
+}
+
+
+
 

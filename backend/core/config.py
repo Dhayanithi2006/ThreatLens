@@ -148,3 +148,29 @@ PYG_DEVICE: str = os.getenv("PYG_DEVICE", "cpu")
 PYG_MAX_SUBGRAPH_HOPS: int = int(os.getenv("PYG_MAX_SUBGRAPH_HOPS", "2"))
 PYG_MAX_SUBGRAPH_NODES: int = int(os.getenv("PYG_MAX_SUBGRAPH_NODES", "200"))
 
+# ==========================================================
+# Remote Windows Collector Configuration
+# ==========================================================
+# HMAC secret used to sign/verify stored token digests.
+# Must be set to a strong random value in production.
+COLLECTOR_REGISTRY_SECRET: str = os.getenv(
+    "COLLECTOR_REGISTRY_SECRET", "threatlens_dev_collector_secret_change_in_prod"
+)
+
+# Path to JSON file storing collector registrations (outside source control)
+COLLECTOR_REGISTRY_PATH: str = os.getenv(
+    "COLLECTOR_REGISTRY_PATH", "backend/data/collector_registry.json"
+)
+
+# Maximum events accepted per POST /collector/ingest/events request
+COLLECTOR_MAX_EVENTS_PER_BATCH: int = int(os.getenv("COLLECTOR_MAX_EVENTS_PER_BATCH", "500"))
+
+# Maximum request body size (bytes) for collector ingestion endpoints
+COLLECTOR_MAX_REQUEST_SIZE_BYTES: int = int(
+    os.getenv("COLLECTOR_MAX_REQUEST_SIZE_BYTES", str(4 * 1024 * 1024))  # 4 MB
+)
+
+# Requests-per-minute per collector (sliding window)
+COLLECTOR_RATE_LIMIT_RPM: int = int(os.getenv("COLLECTOR_RATE_LIMIT_RPM", "60"))
+
+

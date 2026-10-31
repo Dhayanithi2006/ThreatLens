@@ -301,7 +301,20 @@ class AttackPathService:
             )
 
         # Resolve target critical assets
-        target_ids = set(self._resolve_target_asset_ids(request.target_node_ids))
+        target_ids_list = self._resolve_target_asset_ids(request.target_node_ids)
+        if target_ids_list and all(tid.lower() == entry_node.id.lower() for tid in target_ids_list):
+            calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+            return AttackPathResult(
+                entry_node=entry_node,
+                total_paths_discovered=0,
+                paths=[],
+                targets_reached=[entry_node.id],
+                calculation_time_ms=calc_time_ms,
+                warnings=["Source and target entities are identical; self-traversal does not represent a lateral movement path."],
+                methodology_note="Source and target entities are identical; 0 candidate lateral movement paths.",
+            )
+
+        target_ids = set(target_ids_list)
         # Exclude entry node from targets if accidentally included
         target_ids.discard(entry_node.id)
 

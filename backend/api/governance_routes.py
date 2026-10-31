@@ -5,7 +5,7 @@ evidence-backed policy evaluations, remediation tracking, and tamper-evident aud
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 
 from backend.core.security import get_actor_identity, verify_admin_access
@@ -24,6 +24,11 @@ from backend.governance.policies import (
     get_policy,
     list_policies,
     save_policy,
+)
+from backend.governance.reports import (
+    EvidenceLedgerItem,
+    GovernanceReport,
+    GovernanceReportService,
 )
 from backend.governance.schema import (
     AuditRecord,
@@ -76,6 +81,33 @@ class CreateRemediationRequest(BaseModel):
 class UpdateRemediationRequest(BaseModel):
     status: RemediationStatus = Field(description="New status: OPEN, IN_PROGRESS, RESOLVED, ACCEPTED_RISK")
     resolution_evidence: Optional[str] = Field(default=None, description="Resolution notes, ticket ID, or patch proof")
+
+
+class GenerateReportRequest(BaseModel):
+    framework: Optional[str] = Field(
+        default="ALL",
+        description="Target framework: 'NIST CSF', 'CIS Controls', 'ISO/IEC 27001', or 'ALL'",
+    )
+    scope: Optional[str] = Field(
+        default="ENTERPRISE",
+        description="Operational scope e.g. ENTERPRISE, PRODUCTION, WORKSTATIONS",
+    )
+    start_time: Optional[str] = Field(
+        default=None,
+        description="Optional ISO-8601 UTC start datetime filter",
+    )
+    end_time: Optional[str] = Field(
+        default=None,
+        description="Optional ISO-8601 UTC end datetime filter",
+    )
+
+
+class VerifyEvidenceRequest(BaseModel):
+    evidence_id: str = Field(description="Evidence record identifier e.g. case ID or audit ID")
+    provided_hash: Optional[str] = Field(
+        default=None,
+        description="Optional SHA-256 digest to compare against the stored chain-of-custody hash",
+    )
 
 
 # =============================================================================
@@ -290,3 +322,106 @@ async def verify_ledger_cryptographic_integrity():
         "status": "VERIFIED_TAMPER_FREE" if is_valid else "INTEGRITY_VIOLATION_DETECTED",
         "error_detail": error_msg,
     }
+
+
+# =============================================================================
+# 6. Report Generation & Evidence Endpoints
+# =============================================================================
+
+@router.post("/reports/generate", response_model=GovernanceReport, status_code=status.HTTP_201_CREATED)
+async def generate_governance_report(
+    payload: GenerateReportRequest,
+    actor: str = Depends(get_actor_identity),
+):
+    """
+    Generates an evidence-backed governance report evaluating active policies
+    against real cases, graph topology, and collector telemetry.
+    """
+    try:
+        return GovernanceReportService.generate_report(
+            framework=payload.framework,
+            scope=payload.scope,
+            start_time=payload.start_time,
+            end_time=payload.end_time,
+            actor_id=actor,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+
+@router.get("/reports", response_model=List[GovernanceReport])
+async def list_governance_reports(
+    limit: int = Query(50, ge=1, le=200, description="Maximum reports to return"),
+):
+    """Lists generated governance reports in reverse chronological order."""
+    return GovernanceReportService.list_reports(limit=limit)
+
+
+@router.get("/reports/{report_id}", response_model=GovernanceReport)
+async def get_governance_report_by_id(report_id: str):
+    """Retrieves a generated governance report by canonical report ID."""
+    rpt = GovernanceReportService.get_report(report_id)
+    if not rpt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Governance report '{report_id}' not found.",
+        )
+    return rpt
+
+
+@router.get("/reports/{report_id}/export")
+async def export_governance_report(
+    report_id: str,
+    format: str = Query("json", description="Export format: 'json', 'csv', or 'html'"),
+    actor: str = Depends(get_actor_identity),
+):
+    """
+    Exports a generated governance report in JSON, CSV, or safe HTML format.
+    Ensures XSS safety on HTML exports via strict HTML escaping.
+    """
+    try:
+        content, media_type = GovernanceReportService.export_report(
+            report_id=report_id,
+            export_format=format,
+            actor_id=actor,
+        )
+        return Response(content=content, media_type=media_type)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Governance report '{report_id}' not found.",
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+
+@router.get("/evidence/ledger", response_model=List[EvidenceLedgerItem])
+async def get_evidence_ledger():
+    """
+    Retrieves cryptographic chain of custody records for email cases,
+    graph findings, and collector telemetry with verified SHA-256 hashes.
+    """
+    return GovernanceReportService.get_evidence_ledger()
+
+
+@router.post("/evidence/verify")
+async def verify_evidence_hash(payload: VerifyEvidenceRequest):
+    """
+    Verifies SHA-256 digest for an evidence item against chain-of-custody ledger.
+    """
+    res = GovernanceReportService.verify_evidence_hash(
+        evidence_id=payload.evidence_id,
+        provided_hash=payload.provided_hash,
+    )
+    if not res.get("verified") and res.get("status") == "EVIDENCE_NOT_FOUND":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=res.get("detail", "Evidence not found."),
+        )
+    return res

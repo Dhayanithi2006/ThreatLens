@@ -1,0 +1,19 @@
+{
+  "_comment": "ThreatLens Collector Configuration Template — fill in server_url, collector_id and token",
+  "server_url": "https://YOUR_THREATLENS_SERVER",
+  "collector_id": "REPLACE_WITH_COLLECTOR_ID",
+  "token": "REPLACE_WITH_TOKEN_OR_USE_THREATLENS_TOKEN_ENV_VAR",
+  "hostname_override": "",
+  "channels": ["Security"],
+  "event_ids": [4624, 4625, 4648, 4672, 4688, 4698, 4720, 5140, 5156, 5157],
+  "poll_interval_seconds": 30,
+  "batch_size": 100,
+  "checkpoint_file": "C:\\ThreatLensCollector\\checkpoint.json",
+  "spool_dir": "C:\\ThreatLensCollector\\spool",
+  "ca_cert": "",
+  "verify_tls": true,
+  "max_retries": 3,
+  "retry_backoff_seconds": 5,
+  "log_file": "C:\\ThreatLensCollector\\collector.log",
+  "log_level": "INFO"
+}

@@ -14,6 +14,8 @@ class InMemoryGraphOpsClient:
 
     def __init__(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
         self.nodes = {n["id"].lower(): n for n in nodes}
+        self.edges = edges
+        self.security_events: Dict[str, Dict[str, Any]] = {}
         self.aliases: Dict[str, str] = {}
         for n in nodes:
             nid = n["id"].lower()
@@ -26,7 +28,59 @@ class InMemoryGraphOpsClient:
                         self.aliases[str(val).split(":", 1)[1].lower()] = nid
             if ":" in nid:
                 self.aliases[nid.split(":", 1)[1].lower()] = nid
-        self.edges = edges
+
+    def init_schema_constraints(self, database: Optional[str] = None) -> Dict[str, Any]:
+        """In-memory mock implementation of schema constraints initialization."""
+        from backend.graphops.schema import CYPHER_SCHEMA_STATEMENTS
+        return {
+            "applied": CYPHER_SCHEMA_STATEMENTS,
+            "errors": [],
+            "total": len(CYPHER_SCHEMA_STATEMENTS),
+            "status": "CONSTRAINTS_APPLIED",
+        }
+
+    def execute_write(self, query: str, params: Optional[Dict[str, Any]] = None, database: Optional[str] = None) -> Dict[str, Any]:
+        """In-memory implementation of Cypher write operations with transaction counters."""
+        params = params or {}
+        q = query.strip()
+        nodes_created = 0
+        relationships_created = 0
+
+        # Handle batch node UNWIND
+        if "UNWIND $batch AS item" in q and "MERGE (n:" in q:
+            batch = params.get("batch", [])
+            for item in batch:
+                nid = str(item.get("id", "")).lower()
+                props = item.get("properties", {})
+                if nid:
+                    if nid not in self.nodes:
+                        nodes_created += 1
+                    self.nodes[nid] = {
+                        "id": item.get("id"),
+                        "labels": ["Entity"],
+                        "properties": props,
+                    }
+                    if ":" in nid:
+                        self.aliases[nid.split(":", 1)[1].lower()] = nid
+            return {"nodes_created": nodes_created, "properties_set": len(batch)}
+
+        # Handle batch relationship UNWIND
+        if "UNWIND $batch AS item" in q and ("MERGE (src)-[r:" in q or "MERGE (s)-[r:" in q or "CREATE (src)-[r:" in q):
+            batch = params.get("batch", [])
+            for item in batch:
+                rel_type = item.get("type", "CONNECTED_TO")
+                props = item.get("properties", {})
+                self.edges.append({
+                    "source_id": item.get("source_id"),
+                    "target_id": item.get("target_id"),
+                    "relationship_type": rel_type,
+                    "evidence_class": props.get("evidence_class", "OBSERVED"),
+                    "properties": props,
+                })
+                relationships_created += 1
+            return {"relationships_created": relationships_created, "properties_set": len(batch)}
+
+        return {"nodes_created": 0, "relationships_created": 0, "properties_set": 0}
 
     def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         params = params or {}
@@ -184,8 +238,182 @@ class InMemoryGraphOpsClient:
 
             return found_paths
 
-        # 5. Ingestion MERGE statement (record without failure in mock mode)
-        if "MERGE (e:SecurityEvent" in q or "MERGE (target)-[:" in q or "CREATE" in q or "MERGE" in q:
+        # 5. Graph Topology & Summary Queries
+        if "MATCH (n) RETURN n.id AS id" in q:
+            results = []
+            for n in self.nodes.values():
+                results.append({
+                    "id": n.get("id"),
+                    "email": n.get("properties", {}).get("email")
+                })
+            return results
+
+        if "RETURN labels(n)[0] AS label" in q:
+            counts = {}
+            for n in self.nodes.values():
+                lbl = (n.get("labels") or ["Entity"])[0]
+                counts[lbl] = counts.get(lbl, 0) + 1
+            return [{"label": k, "count": v} for k, v in counts.items()]
+
+        if "RETURN type(r) AS rel_type" in q:
+            counts = {}
+            for e in self.edges:
+                rt = e.get("relationship_type", "RELATED_TO")
+                counts[rt] = counts.get(rt, 0) + 1
+            return [{"rel_type": k, "count": v} for k, v in counts.items()]
+
+        if "MATCH (c:CriticalAsset) RETURN" in q:
+            results = []
+            for n in self.nodes.values():
+                if "CriticalAsset" in n.get("labels", []) or n.get("properties", {}).get("criticality") == "CRITICAL":
+                    results.append({
+                        "id": n.get("id"),
+                        "name": n.get("properties", {}).get("name", n.get("id")),
+                        "impact": n.get("properties", {}).get("impact_score", 9.0),
+                        "category": n.get("properties", {}).get("category", "DATABASE")
+                    })
+            return results
+
+        # 6. Centrality & Community Detection Queries
+        if "MATCH (n)" in q and ("WHERE NOT n:SecurityEvent" in q or "labels(n)" in q):
+            results = []
+            for n in self.nodes.values():
+                if "SecurityEvent" in n.get("labels", []):
+                    continue
+                props = n.get("properties", {})
+                name = props.get("name") or props.get("hostname") or props.get("email") or n.get("id")
+                results.append({
+                    "id": n.get("id"),
+                    "label": (n.get("labels") or ["Entity"])[0],
+                    "labels": n.get("labels", ["Entity"]),
+                    "name": name,
+                    "criticality": props.get("criticality", "MEDIUM"),
+                })
+            return results
+
+        if "MATCH (s)-[r]->(t)" in q:
+            results = []
+            for e in self.edges:
+                results.append({
+                    "source": e.get("source_id"),
+                    "target": e.get("target_id"),
+                    "rel_type": e.get("relationship_type"),
+                    "type": e.get("relationship_type"),
+                })
+            return results
+
+        # 7. Zero-Trust Audit Queries
+        if "HAS_PERMISSION" in q:
+            results = []
+            for e in self.edges:
+                if e.get("relationship_type") == "HAS_PERMISSION":
+                    u = self.nodes.get(e["source_id"].lower(), {})
+                    t = self.nodes.get(e["target_id"].lower(), {})
+
+                    # Dynamically resolve user's assigned device via USES relationship
+                    user_device = None
+                    for dev_edge in self.edges:
+                        if dev_edge.get("relationship_type") == "USES" and dev_edge.get("source_id", "").lower() == e["source_id"].lower():
+                            user_device = dev_edge.get("target_id")
+                            break
+
+                    results.append({
+                        "user_id": e["source_id"],
+                        "user_label": (u.get("labels") or ["User"])[0],
+                        "device_id": user_device or "device:dev-ws-101",
+                        "target_id": e["target_id"],
+                        "target_label": (t.get("labels") or ["Server"])[0],
+                        "target_criticality": t.get("properties", {}).get("criticality", "HIGH"),
+                        "permission_level": e.get("properties", {}).get("permission_level", "ADMIN"),
+                        "granted_at": e.get("properties", {}).get("granted_at", "2024-01-01T00:00:00Z"),
+                        "last_used_at": e.get("properties", {}).get("last_used_at"),
+                    })
+            return results
+
+        # 7. Observed activity query for Zero-Trust audit (MATCH ... OBSERVED_CONNECTION|LOGGED_IN_TO)
+        if "MERGE" not in q and ("OBSERVED_CONNECTION" in q or "LOGGED_IN_TO" in q):
+            results = []
+            for e in self.edges:
+                if e.get("relationship_type") in ("OBSERVED_CONNECTION", "LOGGED_IN_TO"):
+                    s = self.nodes.get(e["source_id"].lower(), {})
+                    t = self.nodes.get(e["target_id"].lower(), {})
+                    results.append({
+                        "source_id": e["source_id"],
+                        "source_label": (s.get("labels") or ["Device"])[0],
+                        "target_id": e["target_id"],
+                        "target_label": (t.get("labels") or ["Server"])[0],
+                        "target_criticality": t.get("properties", {}).get("criticality", "MEDIUM"),
+                        "last_observed": "2026-10-28T00:00:00Z",
+                    })
+            return results
+
+        # 8. SecurityEvent Marker Query (Deduplication Check)
+        if "MATCH (e:SecurityEvent {id: $event_id})" in q:
+            eid = params.get("event_id")
+            if eid and eid in self.security_events:
+                return [{"id": eid}]
+            return []
+
+        # 9. Ingestion MERGE statements for SecurityEvent, Device auto-provisioning, and relationships
+        if "MERGE (e:SecurityEvent {id: $event_id})" in q:
+            eid = params.get("event_id")
+            if eid:
+                self.security_events[eid] = params
+                self.nodes[eid.lower()] = {
+                    "id": eid,
+                    "labels": ["SecurityEvent"],
+                    "properties": params,
+                }
+            return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
+
+        if "MERGE (d:Device {id: $id})" in q:
+            dev_id = params.get("id")
+            if dev_id:
+                norm_dev = dev_id.lower()
+                self.nodes[norm_dev] = {
+                    "id": dev_id,
+                    "labels": ["Device"],
+                    "properties": {
+                        "device_id": params.get("device_id", ""),
+                        "hostname": params.get("hostname", ""),
+                        "criticality": "MEDIUM",
+                        "created_at": params.get("timestamp", ""),
+                    },
+                }
+                clean_host = norm_dev.split(":", 1)[1] if ":" in norm_dev else norm_dev
+                self.aliases[clean_host] = norm_dev
+            return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
+
+        if "MERGE (s)-[r:OBSERVED_CONNECTION]->(t)" in q:
+            src_id = params.get("src_id")
+            tgt_id = params.get("tgt_id")
+            if src_id and tgt_id:
+                self.edges.append({
+                    "source_id": src_id,
+                    "target_id": tgt_id,
+                    "relationship_type": "OBSERVED_CONNECTION",
+                    "evidence_class": "OBSERVED",
+                    "port": params.get("port", 443),
+                    "traversal_cost": 1.5,
+                    "last_observed": params.get("timestamp", ""),
+                })
+            return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
+
+        if "MERGE (u)-[r:LOGGED_IN_TO]->(t)" in q:
+            user_id = params.get("user_id")
+            target_id = params.get("target_id")
+            if user_id and target_id:
+                self.edges.append({
+                    "source_id": user_id,
+                    "target_id": target_id,
+                    "relationship_type": "LOGGED_IN_TO",
+                    "evidence_class": "OBSERVED",
+                    "traversal_cost": 1.0,
+                    "last_observed": params.get("timestamp", ""),
+                })
+            return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
+
+        if "MERGE" in q or "CREATE" in q:
             return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
 
         return []

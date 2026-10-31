@@ -77,6 +77,8 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
                         "critical": bool(
                             str(r.get("criticality", "")).upper() == "CRITICAL"
                             or "CriticalAsset" in (r.get("labels") or [])
+                            or str(r.get("id", "")).startswith("critical:")
+                            or str(r.get("id", "")).startswith("crit:")
                         ),
                     }
                     for r in node_records
@@ -102,6 +104,7 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
         for a in entities.get("applications", []):
             nodes_data.append({"id": f"app:{a['app_id'].lower()}", "label": "Application", "name": a.get("name"), "critical": a.get("critical_asset", False)})
         for c in entities.get("critical_assets", []):
+            nodes_data.append({"id": f"critical:{c['asset_id'].lower()}", "label": "CriticalAsset", "name": c.get("name"), "critical": True})
             nodes_data.append({"id": f"crit:{c['asset_id'].lower()}", "label": "CriticalAsset", "name": c.get("name"), "critical": True})
 
         rels_raw = fixture.get("relationships", {})

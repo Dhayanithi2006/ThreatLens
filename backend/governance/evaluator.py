@@ -337,6 +337,23 @@ def _eval_pol_exposure_01(
             data_limitations=["Blast radius simulation based on directional graph traversal depth."],
             recommended_remediation="Sever high-centrality choke point edges or isolate root entity using containment simulation.",
         )
+
+    # Check for partial reachability evaluation (e.g. 1-hop evaluated when policy specifies 3 hops)
+    hop_depth = blast_radius.get("hop_depth")
+    required_hops = policy.rule_conditions.get("max_reachability_hops", 3)
+    if blast_radius.get("is_partial") or (hop_depth is not None and hop_depth < required_hops):
+        return PolicyEvaluation(
+            evaluation_id=eval_id,
+            policy_id=policy.policy_id,
+            control_id=primary_control,
+            status=EvaluationStatus.PARTIAL,
+            supporting_evidence=evidence,
+            applicable_rule=f"Compromised entity blast radius must be comprehensively evaluated across {required_hops} hops.",
+            reasoning=f"Blast radius analysis provided partial reachability evidence ({hop_depth or 1} hop depth); higher-hop perimeter exposure remains unassessed.",
+            timestamp=now,
+            data_limitations=["Partial traversal evidence. Higher-hop Crown Jewel reachability unassessed."],
+            recommended_remediation="Re-evaluate blast radius with full 3-hop traversal depth to confirm complete perimeter isolation.",
+        )
         
     return PolicyEvaluation(
         evaluation_id=eval_id,
@@ -471,12 +488,29 @@ def _eval_pol_log_01(
         elif rel in ("CAN_REACH", "POTENTIAL_PIVOT", "ASSUMED_ROUTE"):
             unlogged_edges.append(e)
             
-    if unlogged_edges:
+    if unlogged_edges and logged_edges:
         return PolicyEvaluation(
             evaluation_id=eval_id,
             policy_id=policy.policy_id,
             control_id=primary_control,
-            status=EvaluationStatus.NEEDS_REVIEW,
+            status=EvaluationStatus.PARTIAL,
+            supporting_evidence=[{
+                "unlogged_edge_count": len(unlogged_edges),
+                "logged_edge_count": len(logged_edges),
+                "sample_unlogged": unlogged_edges[:3],
+            }],
+            applicable_rule="Lateral movement paths must be backed by verified observation telemetry.",
+            reasoning=f"Partial telemetry coverage: {len(logged_edges)} edge(s) verified by observation telemetry, but {len(unlogged_edges)} speculative or unlogged transition(s) detected.",
+            timestamp=now,
+            data_limitations=["Partial network telemetry visibility across evaluated path segments."],
+            recommended_remediation="Enable NetFlow / VPC flow logging and Windows Filtering Platform Events 5156/5157 across unmonitored subnets.",
+        )
+    elif unlogged_edges:
+        return PolicyEvaluation(
+            evaluation_id=eval_id,
+            policy_id=policy.policy_id,
+            control_id=primary_control,
+            status=EvaluationStatus.FAIL,
             supporting_evidence=[{
                 "unlogged_edge_count": len(unlogged_edges),
                 "sample_unlogged": unlogged_edges[:3],
@@ -484,7 +518,7 @@ def _eval_pol_log_01(
             applicable_rule="Lateral movement paths must be backed by verified observation telemetry.",
             reasoning=f"Found {len(unlogged_edges)} speculative or unlogged topological path transitions lacking SIEM connection telemetry.",
             timestamp=now,
-            data_limitations=["Graph includes theoretical reachable edges not yet confirmed by wire-level packet captures."],
+            data_limitations=["Graph includes theoretical reachable edges not yet confirmed by wire-level telemetry."],
             recommended_remediation="Enable NetFlow / VPC flow logging and Sysmon Event ID 3 across intermediate subnets.",
         )
         

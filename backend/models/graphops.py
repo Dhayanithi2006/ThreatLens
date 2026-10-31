@@ -449,6 +449,19 @@ class BlastRadiusResult(BaseModel):
     calculation_time_ms: Optional[float] = Field(default=None, description="Execution time in milliseconds")
     warnings: List[str] = Field(default_factory=list, description="Warnings about bounded traversal limits or assumptions")
 
+    @computed_field
+    @property
+    def hop_distribution(self) -> Dict[str, int]:
+        """Provides direct dictionary of node counts per hop for straightforward UI and client ingestion."""
+        return {
+            "1": self.hop_1.node_count,
+            "2": self.hop_2.node_count,
+            "3": self.hop_3.node_count,
+        }
+
+
+
+
 
 # =====================================================================
 # 6. ATTACK-PATH DISCOVERY CONTRACTS
@@ -686,6 +699,41 @@ class ContainmentSimulationResult(BaseModel):
     safety_disclaimer: str = Field(
         default="SIMULATION ONLY: No actual permissions were revoked, no devices were disconnected, "
                 "and no live infrastructure was modified."
+    )
+
+
+class BlastRadiusContainmentRequest(BaseModel):
+    """Input payload to simulate containment interventions against blast radius."""
+    start_node_id: str = Field(description="Canonical starting node ID")
+    max_hops: int = Field(default=3, ge=1, le=3, description="Maximum neighborhood search depth (1, 2, or 3 hops)")
+    direction: TraversalDirection = Field(default=TraversalDirection.OUTGOING, description="Traversal direction")
+    allowed_relationship_types: Optional[List[RelationshipType]] = None
+    include_hypothetical: bool = Field(default=False, description="Whether to include hypothetical vectors")
+    proposed_interventions: List[ProposedIntervention] = Field(min_length=1, description="Proposed containment interventions")
+
+
+class BlastRadiusContainmentResult(BaseModel):
+    """Result of What-If containment simulation applied to blast-radius perimeter."""
+    simulation_id: str = Field(description="Deterministic simulation identifier e.g. SIM-BLAST-A1B2C3D4")
+    entry_node_id: str = Field(description="Root entity evaluated")
+    max_hops: int = Field(description="Evaluated hop perimeter depth")
+    live_graph_modified: bool = Field(
+        default=False,
+        description="Safety guarantee: live Neo4j database was NOT modified during simulation."
+    )
+    baseline_reachable_nodes_count: int = Field(description="Reachable entities before containment")
+    simulated_reachable_nodes_count: int = Field(description="Reachable entities after proposed containment")
+    eliminated_nodes_count: int = Field(description="Entities successfully isolated from compromise reach")
+    containment_efficiency_pct: float = Field(description="Percentage reduction in blast-radius reach (0-100%)")
+    baseline_critical_assets_count: int = Field(description="Crown Jewels reachable before containment")
+    remaining_critical_assets_count: int = Field(description="Crown Jewels still reachable after containment")
+    eliminated_critical_assets_count: int = Field(description="Crown Jewels protected by containment")
+    eliminated_node_ids: List[str] = Field(default_factory=list, description="IDs of nodes isolated by simulation")
+    remaining_node_ids: List[str] = Field(default_factory=list, description="IDs of nodes remaining reachable")
+    analyst_verdict: str = Field(description="Executive analysis verdict")
+    safety_disclaimer: str = Field(
+        default="SIMULATION ONLY: In-memory evaluation. No live network configuration, firewall rules, "
+                "or database nodes were modified."
     )
 
 

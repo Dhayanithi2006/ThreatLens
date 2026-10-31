@@ -103,20 +103,47 @@ def list_audit_records(limit: int = 100) -> List[AuditRecord]:
 def verify_audit_integrity() -> Tuple[bool, Optional[str]]:
     """
     Verifies cryptographic hash chain integrity across all recorded audit entries.
+    Checks:
+    1. Duplicate audit IDs
+    2. Chronological monotonicity (timestamps non-decreasing)
+    3. Previous hash chaining back to GENESIS_HASH
+    4. Deterministic SHA-256 payload digest recalculation
     Returns (True, None) if the chain is unblemished, or (False, error_message)
-    if tampering or broken linkages are detected.
+    if tampering, broken linkages, duplicates, or out-of-order records are detected.
     """
     with _audit_lock:
+        if not _audit_ledger:
+            return (True, None)
+
         expected_prev = GENESIS_HASH
+        seen_ids = set()
+        prev_timestamp = None
+
         for idx, entry in enumerate(_audit_ledger):
-            # Check previous hash linkage
+            # 1. Check duplicate audit_id
+            if entry.audit_id in seen_ids:
+                return (
+                    False,
+                    f"Duplicate audit_id detected at index {idx}: '{entry.audit_id}'.",
+                )
+            seen_ids.add(entry.audit_id)
+
+            # 2. Check chronological monotonicity
+            if prev_timestamp is not None and entry.timestamp < prev_timestamp:
+                return (
+                    False,
+                    f"Chronological anomaly at index {idx} (ID: {entry.audit_id}): timestamp {entry.timestamp} precedes earlier entry {prev_timestamp}.",
+                )
+            prev_timestamp = entry.timestamp
+
+            # 3. Check previous hash linkage
             if entry.previous_hash != expected_prev:
                 return (
                     False,
                     f"Chain break at index {idx} (ID: {entry.audit_id}): previous_hash '{entry.previous_hash}' does not match expected '{expected_prev}'.",
                 )
             
-            # Recalculate payload hash
+            # 4. Recalculate payload hash
             recomputed = _compute_hash(
                 audit_id=entry.audit_id,
                 event_type=entry.event_type,

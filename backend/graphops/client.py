@@ -99,7 +99,18 @@ class Neo4jClient:
         )
 
         self._driver: Optional[Any] = None
+        self._mock_client: Optional[Any] = None
+        self._is_available: Optional[bool] = None
         self._lock = threading.Lock()
+
+    def _get_mock_fallback(self) -> Any:
+        if self._mock_client is None:
+            try:
+                from backend.graphops.mock_client import get_mock_graphops_client
+                self._mock_client = get_mock_graphops_client()
+            except Exception as e:
+                logger.error("Failed to initialize in-memory fallback graph client: %s", e)
+        return self._mock_client
 
     def get_driver(self) -> Any:
         """
@@ -121,9 +132,10 @@ class Neo4jClient:
                     self._driver = neo4j.GraphDatabase.driver(
                         self.uri,
                         auth=auth,
-                        connection_timeout=self.connection_timeout,
+                        connection_timeout=min(self.connection_timeout, 2.0),
                         max_connection_lifetime=self.max_connection_lifetime,
                         max_connection_pool_size=self.max_connection_pool_size,
+                        max_transaction_retry_time=1.0,
                     )
                     logger.info(f"Neo4j driver initialized for {self.uri} (user: {self.user})")
                 except Exception as e:
@@ -137,9 +149,13 @@ class Neo4jClient:
         Returns sanitized server metadata without exposing credentials.
         Raises GraphOpsConnectionError if connection fails.
         """
+        if self._is_available is False:
+            raise GraphOpsConnectionError(f"Neo4j service unavailable at {self.uri}")
+
         driver = self.get_driver()
         try:
             server_info = driver.verify_connectivity()
+            self._is_available = True
             # server_info can be ServerInfo object or dict depending on driver version
             agent = getattr(server_info, "agent", "Neo4j")
             protocol_version = getattr(server_info, "protocol_version", "Bolt")
@@ -151,10 +167,13 @@ class Neo4jClient:
                 "address": str(address),
             }
         except (ServiceUnavailable, ConnectionRefusedError, TimeoutError, OSError) as e:
+            self._is_available = False
             raise GraphOpsConnectionError(f"Neo4j service unavailable at {self.uri}: {str(e)}")
         except AuthError as e:
+            self._is_available = False
             raise GraphOpsConnectionError(f"Neo4j authentication failed for user '{self.user}': {str(e)}")
         except Exception as e:
+            self._is_available = False
             raise GraphOpsConnectionError(f"Neo4j connectivity check failed: {str(e)}")
 
     def health_check(self) -> Dict[str, Any]:
@@ -172,6 +191,7 @@ class Neo4jClient:
                 "protocol": info.get("protocol_version", "Bolt"),
             }
         except Exception as e:
+            # Return unhealthy when Neo4j is genuinely unreachable
             return {
                 "status": "unhealthy",
                 "database": self.database,
@@ -198,8 +218,10 @@ class Neo4jClient:
             with driver.session(database=db) as session:
                 result = session.run(query, params)
                 records = [record.data() for record in result]
+                self._is_available = True
                 return records
-        except (ServiceUnavailable, ConnectionRefusedError, TimeoutError, OSError) as e:
+        except (ServiceUnavailable, ConnectionRefusedError, TimeoutError, OSError, GraphOpsConnectionError) as e:
+            self._is_available = False
             raise GraphOpsConnectionError(f"Failed to connect to Neo4j during query execution: {str(e)}")
         except AuthError as e:
             raise GraphOpsConnectionError(f"Neo4j authentication failed: {str(e)}")
@@ -240,8 +262,11 @@ class Neo4jClient:
 
         try:
             with driver.session(database=db) as session:
-                return session.execute_write(_transaction_work)
-        except (ServiceUnavailable, ConnectionRefusedError, TimeoutError, OSError) as e:
+                out = session.execute_write(_transaction_work)
+                self._is_available = True
+                return out
+        except (ServiceUnavailable, ConnectionRefusedError, TimeoutError, OSError, GraphOpsConnectionError) as e:
+            self._is_available = False
             raise GraphOpsConnectionError(f"Failed to connect to Neo4j during write transaction: {str(e)}")
         except AuthError as e:
             raise GraphOpsConnectionError(f"Neo4j write authentication failed: {str(e)}")

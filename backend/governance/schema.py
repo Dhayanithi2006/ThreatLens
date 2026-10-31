@@ -14,13 +14,16 @@ class EvaluationStatus(str, Enum):
     """
     Deterministic compliance evaluation statuses.
     In accordance with governance standards, lack of evidence must
-    NEVER be treated as compliant; it resolves to NEEDS_REVIEW or NOT_EVALUATED.
+    NEVER be treated as compliant; it resolves to INSUFFICIENT_EVIDENCE,
+    NEEDS_REVIEW, or NOT_EVALUATED.
     """
     PASS = "PASS"
     FAIL = "FAIL"
+    PARTIAL = "PARTIAL"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     NOT_EVALUATED = "NOT_EVALUATED"
     NOT_APPLICABLE = "NOT_APPLICABLE"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
 
 class RemediationStatus(str, Enum):

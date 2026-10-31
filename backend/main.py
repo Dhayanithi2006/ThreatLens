@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.api.routes import router as api_router
 from backend.api.graphops_routes import router as graphops_router
 from backend.api.governance_routes import router as governance_router
+from backend.api.collector_routes import router as collector_router
 from backend.graphops.client import close_graphops_client
 from backend.graphops.kafka_worker import get_kafka_worker
 from backend.core.config import STATIC_DIR, CORS_ORIGINS
@@ -80,6 +81,9 @@ app.include_router(graphops_router, prefix="/api/v1/graphops", tags=["GraphOps"]
 
 # Include Governance & Controls router
 app.include_router(governance_router)
+
+# Include Remote Windows Collector router
+app.include_router(collector_router, prefix="/api/v1/collector", tags=["Collector"])
 
 # Mount Static Frontend
 app.mount("/static", StaticFiles(directory=STATIC_DIR, html=True), name="static")

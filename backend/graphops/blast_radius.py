@@ -6,6 +6,7 @@ critical-asset highlighting, and subgraph construction for Cytoscape.js visualiz
 """
 
 import time
+import uuid
 from typing import Dict, List, Optional, Any, Set, Tuple
 import logging
 
@@ -23,6 +24,8 @@ from backend.models.graphops import (
     BlastRadiusHopGroup,
     CriticalAssetExposure,
     BlastRadiusResult,
+    BlastRadiusContainmentResult,
+    ProposedIntervention,
 )
 from backend.graphops.client import Neo4jClient, get_graphops_client, GraphOpsConnectionError
 
@@ -200,11 +203,17 @@ class BlastRadiusService:
         }
         return self.client.execute_query(cypher, params)
 
-    def calculate_blast_radius(self, request: BlastRadiusRequest) -> BlastRadiusResult:
+    def calculate_blast_radius(
+        self,
+        request: BlastRadiusRequest,
+        disabled_node_ids: Optional[Set[str]] = None,
+        disabled_edge_keys: Optional[Set[Tuple[str, str, str]]] = None,
+    ) -> BlastRadiusResult:
         """
         Calculates bounded 1-hop, 2-hop, and 3-hop blast radius neighborhoods using BFS.
         Guarantees minimum-hop distance, eliminates duplicate visits, identifies exposed
-        Crown Jewels, and constructs a connected subgraph.
+        Crown Jewels, and constructs a connected subgraph. Supports in-memory What-If
+        containment simulation by suppressing specified disabled nodes and edge keys.
         """
         start_time = time.perf_counter()
 
@@ -224,6 +233,28 @@ class BlastRadiusService:
 
         # Resolve initial compromise root entity
         start_node = self.resolve_start_node(request.start_node_id)
+
+        # What-If containment check on root entity
+        disabled_nodes = {nid.lower() for nid in (disabled_node_ids or set())}
+        disabled_edges = {(src.lower(), tgt.lower(), rt) for src, tgt, rt in (disabled_edge_keys or set())}
+
+        if disabled_nodes and start_node.id.lower() in disabled_nodes:
+            calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+            return BlastRadiusResult(
+                start_node=start_node,
+                max_hops_evaluated=request.max_hops,
+                direction=request.direction,
+                hop_1=BlastRadiusHopGroup(hop_number=1, node_count=0, nodes=[], critical_asset_count=0),
+                hop_2=BlastRadiusHopGroup(hop_number=2, node_count=0, nodes=[], critical_asset_count=0),
+                hop_3=BlastRadiusHopGroup(hop_number=3, node_count=0, nodes=[], critical_asset_count=0),
+                total_reachable_nodes=0,
+                critical_assets_at_risk=[],
+                subgraph_nodes=[start_node],
+                subgraph_edges=[],
+                summary_assessment=f"Isolated entity: Start node '{start_node.name}' ({start_node.id}) is isolated under simulated containment.",
+                calculation_time_ms=calc_time_ms,
+                warnings=["Start node is isolated under simulated containment."],
+            )
 
         # Bounded traversal warnings
         warnings: List[str] = []
@@ -281,6 +312,16 @@ class BlastRadiusService:
                 rel_target_id = rec.get("rel_target_id") or (
                     neighbor_id if request.direction == TraversalDirection.OUTGOING else frontier_id
                 )
+
+                # What-If containment checks: disabled nodes and edges
+                if disabled_nodes and (neighbor_id.lower() in disabled_nodes or frontier_id.lower() in disabled_nodes):
+                    continue
+
+                if disabled_edges:
+                    edge_tuple = (rel_source_id.lower(), rel_target_id.lower(), rel_type_str)
+                    edge_tuple_wildcard = (rel_source_id.lower(), rel_target_id.lower(), "")
+                    if edge_tuple in disabled_edges or edge_tuple_wildcard in disabled_edges:
+                        continue
 
                 # Validate relationship type enum
                 try:
@@ -456,6 +497,80 @@ class BlastRadiusService:
 
         lines.append("Reachable assets represent architectural exposure, not confirmed compromise.")
         return " ".join(lines)
+
+    def simulate_blast_containment(
+        self,
+        request: BlastRadiusRequest,
+        proposed_interventions: List[ProposedIntervention],
+    ) -> BlastRadiusContainmentResult:
+        """
+        Calculates baseline vs simulated blast-radius reachability under hypothetical containment interventions.
+        Guarantees zero live-graph modification.
+        """
+        # Baseline
+        baseline_res = self.calculate_blast_radius(request)
+
+        # Parse interventions
+        disabled_node_ids: Set[str] = set()
+        disabled_edge_keys: Set[Tuple[str, str, str]] = set()
+
+        for interv in proposed_interventions:
+            if interv.node_id:
+                disabled_node_ids.add(interv.node_id.strip())
+            if interv.source_id and interv.target_id:
+                rt = interv.relationship_type.value if interv.relationship_type else ""
+                disabled_edge_keys.add((interv.source_id.strip(), interv.target_id.strip(), rt))
+
+        # Simulated
+        sim_res = self.calculate_blast_radius(
+            request=request,
+            disabled_node_ids=disabled_node_ids,
+            disabled_edge_keys=disabled_edge_keys,
+        )
+
+        baseline_ids = {n.id for h in [baseline_res.hop_1, baseline_res.hop_2, baseline_res.hop_3] for n in h.nodes}
+        sim_ids = {n.id for h in [sim_res.hop_1, sim_res.hop_2, sim_res.hop_3] for n in h.nodes}
+
+        eliminated_ids = sorted(list(baseline_ids - sim_ids))
+        remaining_ids = sorted(list(sim_ids))
+
+        baseline_crit = {c.asset_id for c in baseline_res.critical_assets_at_risk}
+        remaining_crit = {c.asset_id for c in sim_res.critical_assets_at_risk}
+        eliminated_crit = sorted(list(baseline_crit - remaining_crit))
+
+        eliminated_count = len(eliminated_ids)
+        efficiency = (
+            round((eliminated_count / max(1, len(baseline_ids))) * 100.0, 1)
+            if len(baseline_ids) > 0
+            else 0.0
+        )
+
+        if len(remaining_ids) == 0 and len(baseline_ids) > 0:
+            verdict = f"Full blast-radius containment: All {len(baseline_ids)} previously reachable entities successfully isolated."
+        elif len(baseline_ids) == 0:
+            verdict = "Zero baseline entities reachable; target entity was already isolated."
+        else:
+            verdict = (
+                f"Partial blast-radius containment: Isolated {eliminated_count} of {len(baseline_ids)} entities "
+                f"({efficiency}% reduction). {len(remaining_ids)} entities remain reachable."
+            )
+
+        return BlastRadiusContainmentResult(
+            simulation_id=f"SIM-BLAST-{uuid.uuid4().hex[:8].upper()}",
+            entry_node_id=baseline_res.start_node.id,
+            max_hops=request.max_hops,
+            live_graph_modified=False,
+            baseline_reachable_nodes_count=len(baseline_ids),
+            simulated_reachable_nodes_count=len(remaining_ids),
+            eliminated_nodes_count=eliminated_count,
+            containment_efficiency_pct=efficiency,
+            baseline_critical_assets_count=len(baseline_crit),
+            remaining_critical_assets_count=len(remaining_crit),
+            eliminated_critical_assets_count=len(eliminated_crit),
+            eliminated_node_ids=eliminated_ids,
+            remaining_node_ids=remaining_ids,
+            analyst_verdict=verdict,
+        )
 
 
 # Global default blast radius service instance

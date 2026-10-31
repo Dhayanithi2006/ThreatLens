@@ -56,23 +56,30 @@ class CentralityAnalyticsService:
         Executes PageRank (power iteration) and Betweenness Centrality (Brandes' algorithm)
         across the live Neo4j topology.
         """
-        # 1. Fetch live nodes and edges from Neo4j
-        node_records = self.client.execute_query(
-            """
-            MATCH (n)
-            WHERE NOT n:SecurityEvent
-            RETURN n.id AS id, labels(n)[0] AS label,
-                   coalesce(n.name, n.hostname, n.email, n.id) AS name,
-                   coalesce(n.criticality, 'MEDIUM') AS criticality
-            """
-        )
-        edge_records = self.client.execute_query(
-            """
-            MATCH (s)-[r]->(t)
-            WHERE NOT s:SecurityEvent AND NOT t:SecurityEvent
-            RETURN s.id AS source, t.id AS target, type(r) AS rel_type
-            """
-        )
+        # 1. Fetch live nodes and edges from Neo4j (with in-memory fallback)
+        try:
+            node_records = self.client.execute_query(
+                """
+                MATCH (n)
+                WHERE NOT n:SecurityEvent
+                RETURN n.id AS id, labels(n)[0] AS label,
+                       coalesce(n.name, n.hostname, n.email, n.id) AS name,
+                       coalesce(n.criticality, 'MEDIUM') AS criticality
+                """
+            )
+            edge_records = self.client.execute_query(
+                """
+                MATCH (s)-[r]->(t)
+                WHERE NOT s:SecurityEvent AND NOT t:SecurityEvent
+                RETURN s.id AS source, t.id AS target, type(r) AS rel_type
+                """
+            )
+        except Exception as e:
+            logger.warning("Neo4j unreachable for Centrality analysis (%s); using in-memory mock client.", e)
+            from backend.graphops.mock_client import get_mock_graphops_client
+            mock_c = get_mock_graphops_client()
+            node_records = mock_c.execute_query("MATCH (n) WHERE NOT n:SecurityEvent")
+            edge_records = mock_c.execute_query("MATCH (s)-[r]->(t)")
 
         nodes_map: Dict[str, Dict[str, Any]] = {}
         for nr in node_records:

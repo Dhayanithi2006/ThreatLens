@@ -134,10 +134,35 @@ class GraphOpsEventProcessor:
         try:
             resolved_primary = self.blast_service.resolve_start_node(primary_entity_id)
         except NodeNotFoundError:
-            # If entity is completely unknown, we cannot safely analyze graph propagation
-            raise PermanentEventError(
-                f"Referenced primary entity '{primary_entity_id}' could not be resolved in the enterprise graph."
-            )
+            # If entity is an enrolled collector device, auto-provision it into Neo4j so legitimate endpoint logs are never dropped
+            collector_id = (event.evidence_metadata or {}).get("collector_id")
+            if collector_id and primary_entity_id.startswith("device:"):
+                clean_host = primary_entity_id.split(":", 1)[1]
+                src_comp = (event.evidence_metadata or {}).get("source_computer") or clean_host
+                cypher_dev = """
+                MERGE (d:Device {id: $id})
+                ON CREATE SET
+                    d.device_id = $device_id,
+                    d.hostname = $hostname,
+                    d.criticality = 'MEDIUM',
+                    d.created_at = $timestamp
+                """
+                try:
+                    self.client.execute_query(cypher_dev, {
+                        "id": primary_entity_id,
+                        "device_id": clean_host.upper(),
+                        "hostname": src_comp,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                    resolved_primary = self.blast_service.resolve_start_node(primary_entity_id)
+                except Exception as auto_exc:
+                    logger.error("Auto-provisioning failed for %s: %s", primary_entity_id, auto_exc)
+                    raise PermanentEventError(f"Referenced primary entity '{primary_entity_id}' could not be resolved in the enterprise graph.")
+            else:
+                # If entity is completely unknown, we cannot safely analyze graph propagation
+                raise PermanentEventError(
+                    f"Referenced primary entity '{primary_entity_id}' could not be resolved in the enterprise graph."
+                )
 
         # 2. Idempotent Graph Persistence & Deduplication
         already_processed = self.is_event_processed(event.event_id)

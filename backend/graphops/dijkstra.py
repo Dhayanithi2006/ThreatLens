@@ -313,6 +313,28 @@ class DijkstraShortestPathEngine:
 
         # 2. Resolve target Crown Jewels
         target_ids_list = self._resolve_target_asset_ids(request.target_node_id, request.target_node_ids)
+        
+        # Check for explicit identical source and target
+        if target_ids_list and all(tid.lower() == entry_node.id.lower() for tid in target_ids_list):
+            calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
+            return DijkstraShortestPathResult(
+                entry_node=entry_node,
+                target_node=entry_node,
+                path_found=True,
+                total_cost=0.0,
+                hop_count=0,
+                nodes=[entry_node],
+                steps=[],
+                reachable_targets=[entry_node.id],
+                unreachable_targets=[],
+                cost_model_description=(
+                    "Dijkstra weighted shortest-path analysis using min-heap priority queue. "
+                    "Calculates lowest cumulative friction/difficulty candidate route."
+                ),
+                calculation_time_ms=calc_time_ms,
+                warnings=["Source and target entities are identical; 0-hop trivial path with zero traversal friction."],
+            )
+
         target_ids = set(target_ids_list)
         target_ids.discard(entry_node.id)
 

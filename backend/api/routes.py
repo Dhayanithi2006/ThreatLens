@@ -6,7 +6,7 @@ Enterprise Email Threat Investigation, Forensics, IOC Extraction, Threat Intelli
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from fastapi import APIRouter, HTTPException, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 
 from backend.models.threat import EmailAnalysisInput, ThreatDetectionResult
 from backend.models.explanation import ExplainableThreatResult
@@ -383,3 +383,126 @@ async def health_check():
         "service": "ThreatLens - AI Threat Detection, XAI, Forensics, IOCs, Threat Intel & Attack Graph",
         "version": "2.0.0"
     }
+
+
+def get_readiness_graph_client_dep():
+    from backend.graphops.client import get_graphops_client
+    return get_graphops_client()
+
+
+def get_readiness_producer_dep():
+    from backend.graphops.kafka_producer import get_kafka_producer
+    return get_kafka_producer()
+
+
+def get_readiness_worker_dep():
+    from backend.graphops.kafka_worker import get_kafka_worker
+    return get_kafka_worker()
+
+
+@router.get("/ready", summary="System readiness check")
+async def readiness_check(
+    allow_mock: bool = Query(True, description="Whether authorized mock/sandbox mode constitutes operational readiness"),
+    client: Any = Depends(get_readiness_graph_client_dep),
+    producer: Any = Depends(get_readiness_producer_dep),
+    worker: Any = Depends(get_readiness_worker_dep),
+):
+    """
+    Evaluates essential subsystem readiness:
+    - Neo4j graph database connectivity
+    - Apache Kafka streaming producer & consumer worker
+    - Tamper-evident governance audit ledger integrity
+    - Collector registry accessibility
+
+    Readiness semantics:
+    - If allow_mock=False, all dependencies must be connected to live infrastructure (no in-memory mock fallback).
+    - If allow_mock=True, operational mock components are accepted, with mock_mode clearly identified.
+    - If any required component is offline, uninitialized, or compromised, returns HTTP 503.
+    """
+    components = {}
+    is_ready = True
+
+    # 1. Neo4j GraphOps Client
+    try:
+        neo4j_health = client.health_check()
+        is_mock_db = getattr(client, "mock_mode", False) or "in-memory" in str(neo4j_health.get("database", "")).lower()
+        is_connected = neo4j_health.get("connected", False)
+
+        components["neo4j"] = {
+            "status": "online" if is_connected and not is_mock_db else ("mock" if is_mock_db else "offline"),
+            "connected": is_connected,
+            "mock_mode": is_mock_db,
+            "database": neo4j_health.get("database"),
+        }
+        if not is_connected:
+            if not (allow_mock and is_mock_db):
+                is_ready = False
+        elif is_mock_db and not allow_mock:
+            is_ready = False
+    except Exception as e:
+        components["neo4j"] = {"status": "error", "connected": False, "error": str(e)}
+        is_ready = False
+
+    # 2. Kafka Producer
+    try:
+        prod_health = producer.health_check()
+        components["kafka_producer"] = prod_health
+        if prod_health.get("status") == "offline":
+            is_ready = False
+        elif prod_health.get("mock_mode") and not allow_mock:
+            is_ready = False
+    except Exception as e:
+        components["kafka_producer"] = {"status": "error", "error": str(e)}
+        is_ready = False
+
+    # 3. Kafka Consumer Worker
+    try:
+        worker_status = worker.get_status()
+        components["kafka_worker"] = worker_status
+        if worker_status.get("mock_mode") and not allow_mock:
+            is_ready = False
+    except Exception as e:
+        components["kafka_worker"] = {"status": "error", "error": str(e)}
+
+    # 4. Governance Audit Ledger
+    try:
+        from backend.governance.audit import verify_audit_integrity
+        audit_intact, audit_err = verify_audit_integrity()
+        components["audit_ledger"] = {
+            "status": "intact" if audit_intact else "tamper_detected",
+            "intact": audit_intact,
+            "error": audit_err,
+        }
+        if not audit_intact:
+            is_ready = False
+    except Exception as e:
+        components["audit_ledger"] = {"status": "error", "intact": False, "error": str(e)}
+        is_ready = False
+
+    # 5. Collector Registry
+    try:
+        from backend.collector.registry import list_collectors
+        collectors = list_collectors()
+        components["collector_registry"] = {
+            "status": "accessible",
+            "enrolled_collectors_count": len(collectors),
+        }
+    except Exception as e:
+        components["collector_registry"] = {"status": "error", "error": str(e)}
+        is_ready = False
+
+    response_payload = {
+        "status": "ready" if is_ready else "not_ready",
+        "allow_mock": allow_mock,
+        "service": "ThreatLens Enterprise Event Pipeline & Detection Fabric",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "components": components,
+    }
+
+    if not is_ready:
+        raise HTTPException(
+            status_code=503,
+            detail=response_payload,
+        )
+
+    return response_payload

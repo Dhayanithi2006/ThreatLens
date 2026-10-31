@@ -33,9 +33,8 @@
       </div>
 
       <nav class="sidebar-nav">
-        <div class="nav-section-label">SOC Operations</div>
-        
-        <a href="#/dashboard" class="nav-item active" data-route="dashboard">
+        <!-- OVERVIEW / LANDING -->
+        <a href="#/overview" class="nav-item active" data-route="overview" id="nav-item-overview">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="3" width="7" height="7"></rect>
@@ -44,10 +43,13 @@
               <rect x="3" y="14" width="7" height="7"></rect>
             </svg>
           </span>
-          <span class="nav-label">Dashboard</span>
+          <span class="nav-label">Overview</span>
         </a>
 
-        <a href="#/alerts-incidents" class="nav-item" data-route="alerts-incidents">
+        <div class="nav-section-label">CORE GRAPHOPS WORKSPACES</div>
+
+        <!-- PILLAR 1: Investigate Alerts -->
+        <a href="#/investigate" class="nav-item" data-route="investigate" id="nav-item-investigate">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
@@ -55,51 +57,63 @@
               <line x1="12" y1="17" x2="12.01" y2="17"></line>
             </svg>
           </span>
-          <span class="nav-label">Alerts &amp; Incidents</span>
+          <div class="nav-label-group">
+            <span class="nav-label">1. Investigate Alerts</span>
+            <span class="nav-sub">Alerts, Cases &amp; Threat Intel</span>
+          </div>
           <span class="nav-badge" id="nav-badge-cases">6</span>
         </a>
 
-        <a href="#/knowledge-graph" class="nav-item" data-route="knowledge-graph" id="nav-item-graphops">
+        <!-- PILLAR 2: Explore Attack Paths -->
+        <a href="#/attack-paths" class="nav-item" data-route="attack-paths" id="nav-item-paths">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="3"></circle>
-              <circle cx="19" cy="5" r="2"></circle>
-              <circle cx="5" cy="5" r="2"></circle>
-              <circle cx="5" cy="19" r="2"></circle>
-              <circle cx="19" cy="19" r="2"></circle>
-              <line x1="12" y1="9" x2="19" y2="7"></line>
-              <line x1="12" y1="9" x2="5" y2="7"></line>
-              <line x1="12" y1="15" x2="5" y2="17"></line>
-              <line x1="12" y1="15" x2="19" y2="17"></line>
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
             </svg>
           </span>
-          <span class="nav-label">Knowledge Graph &amp; GraphOps</span>
-          <span class="nav-badge" style="background: rgba(56, 189, 248, 0.2); color: var(--brand-cyan);">Neo4j</span>
+          <div class="nav-label-group">
+            <span class="nav-label">2. Explore Attack Paths</span>
+            <span class="nav-sub">Topology, Dijkstra &amp; Chokepoints</span>
+          </div>
+          <span class="nav-badge" style="background: rgba(245, 158, 11, 0.2); color: var(--brand-amber);">Dijkstra</span>
         </a>
 
-        <a href="#/detection-intel" class="nav-item" data-route="detection-intel">
+        <!-- PILLAR 3: Assess Impact -->
+        <a href="#/blast-radius" class="nav-item" data-route="blast-radius" id="nav-item-blast">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"></circle>
-              <line x1="2" y1="12" x2="22" y2="12"></line>
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+              <circle cx="12" cy="12" r="6"></circle>
+              <circle cx="12" cy="12" r="2"></circle>
             </svg>
           </span>
-          <span class="nav-label">Detection &amp; Threat Intelligence</span>
+          <div class="nav-label-group">
+            <span class="nav-label">3. Assess Impact</span>
+            <span class="nav-sub">Blast Radius &amp; Simulation</span>
+          </div>
+          <span class="nav-badge" style="background: rgba(239, 68, 68, 0.2); color: #f87171;">1-3 Hops</span>
         </a>
 
-        <a href="#/access-governance" class="nav-item" data-route="access-governance">
+        <!-- PILLAR 4: Check Access & Anomalies -->
+        <a href="#/access-anomalies" class="nav-item" data-route="access-anomalies" id="nav-item-anomalies">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-              <polyline points="9 12 11 14 15 10"></polyline>
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
             </svg>
           </span>
-          <span class="nav-label">Access &amp; Governance</span>
-          <span class="nav-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">NIST/CIS</span>
+          <div class="nav-label-group">
+            <span class="nav-label">4. Check Access &amp; Anomalies</span>
+            <span class="nav-sub">Zero-Trust &amp; Graph ML</span>
+          </div>
+          <span class="nav-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc;">PyG GNN</span>
         </a>
 
-        <a href="#/evidence-reports" class="nav-item" data-route="evidence-reports">
+        <div class="nav-section-label" style="margin-top: 1.5rem;">COMPLIANCE &amp; AUDIT</div>
+
+        <!-- REPORTS & GOVERNANCE -->
+        <a href="#/governance" class="nav-item" data-route="governance" id="nav-item-governance">
           <span class="nav-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -108,8 +122,13 @@
               <line x1="16" y1="17" x2="8" y2="17"></line>
             </svg>
           </span>
-          <span class="nav-label">Evidence &amp; Reports</span>
+          <div class="nav-label-group">
+            <span class="nav-label">Reports &amp; Governance</span>
+            <span class="nav-sub">SHA-256 Ledger &amp; Controls</span>
+          </div>
+          <span class="nav-badge" style="background: rgba(16, 185, 129, 0.2); color: #10b981;">NIST/CIS</span>
         </a>
+
       </nav>
 
       <div class="sidebar-footer">
@@ -148,25 +167,6 @@
         </div>
 
         <div class="topbar-right">
-          <!-- Engine Health Status Indicators (Phase 7 UI Contract) -->
-          <div id="topbar-engine-indicator" class="engine-status-pill" style="display: flex; align-items: center; gap: 10px; font-size: 0.75rem; background: rgba(15, 23, 42, 0.6); padding: 4px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            <div id="topbar-db-indicator" title="Neo4j Graph Database" style="display: flex; align-items: center; gap: 4px;">
-              <span class="status-dot-pulse" style="background-color: #10b981; width: 7px; height: 7px; border-radius: 50%;"></span>
-              <span style="color: var(--text-muted); font-size: 0.72rem;">Neo4j</span>
-            </div>
-            <div id="topbar-kafka-indicator" title="Apache Kafka Event Stream" style="display: flex; align-items: center; gap: 4px;">
-              <span class="status-dot-pulse" style="background-color: #06b6d4; width: 7px; height: 7px; border-radius: 50%;"></span>
-              <span style="color: var(--text-muted); font-size: 0.72rem;">Kafka</span>
-            </div>
-            <div id="topbar-ml-indicator" title="Isolation Forest Anomaly Model" style="display: flex; align-items: center; gap: 4px;">
-              <span class="status-dot-pulse" style="background-color: #8b5cf6; width: 7px; height: 7px; border-radius: 50%;"></span>
-              <span style="color: var(--text-muted); font-size: 0.72rem;">ML</span>
-            </div>
-            <div id="topbar-pyg-indicator" title="PyG Structural GraphSAGE GNN" style="display: flex; align-items: center; gap: 4px;">
-              <span class="status-dot-pulse" style="background-color: #f59e0b; width: 7px; height: 7px; border-radius: 50%;"></span>
-              <span style="color: var(--text-muted); font-size: 0.72rem;">PyG</span>
-            </div>
-          </div>
         </div>
       </header>
 
@@ -176,7 +176,7 @@
         <!-- =======================================================
              VIEW 1: DASHBOARD
              ======================================================= -->
-        <div id="view-dashboard" class="view-pane active">
+        <div id="view-dashboard" class="view-pane">
           
           <!-- Summary Metrics Cards -->
           <div class="metrics-grid">
@@ -325,6 +325,83 @@
               </div>
             </div>
 
+          </div>
+
+          <!-- Endpoint Telemetry & Connect Computer (Overview Action Card) -->
+          <div class="glass-panel" style="margin-top: 1.5rem; padding: 18px 20px;" id="dash-endpoint-telemetry-panel">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <h3 class="panel-title" style="font-size: 1.05rem;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--brand-cyan);">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                      <line x1="8" y1="21" x2="16" y2="21"></line>
+                      <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    Remote Endpoint Telemetry &amp; Log Collection
+                  </h3>
+                  <span id="dash-collectors-status-pill" class="status-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3);">
+                    Windows Collection Engine
+                  </span>
+                </div>
+                <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px;">
+                  Stream authenticated Windows Security Events (4624, 4625, 4688, 5140, 5156) from authorized endpoints into the Kafka pipeline &amp; Neo4j knowledge graph.
+                </p>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button type="button" id="btn-dash-refresh-collectors" class="btn-table-action" style="font-size: 0.8rem; padding: 6px 12px; cursor: pointer;">
+                  &circlearrowright; Refresh Endpoints
+                </button>
+                <button type="button" id="btn-dash-open-enrol" class="btn-primary" style="font-size: 0.82rem; padding: 7px 16px; background: var(--brand-cyan); color: #020617; font-weight: 700; border-radius: var(--radius-sm); cursor: pointer;">
+                  + Connect Computer
+                </button>
+              </div>
+            </div>
+
+            <!-- Endpoint Telemetry Metrics Bar -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 14px;">
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Enrolled Computers</div>
+                <div id="dash-metric-collectors-total" style="font-size: 1.3rem; font-weight: 800; color: #f8fafc; margin-top: 2px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Actively Sending</div>
+                <div id="dash-metric-collectors-active" style="font-size: 1.3rem; font-weight: 800; color: #10b981; margin-top: 2px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Events Ingested</div>
+                <div id="dash-metric-collectors-events" style="font-size: 1.3rem; font-weight: 800; color: var(--brand-cyan); margin-top: 2px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Ingestion Errors</div>
+                <div id="dash-metric-collectors-errors" style="font-size: 1.3rem; font-weight: 800; color: #f87171; margin-top: 2px;">0</div>
+              </div>
+            </div>
+
+            <!-- Collectors Table -->
+            <div style="overflow-x: auto;">
+              <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                <thead>
+                  <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); text-align: left;">
+                    <th style="padding: 8px 10px;">STATUS</th>
+                    <th style="padding: 8px 10px;">HOSTNAME</th>
+                    <th style="padding: 8px 10px;">CANONICAL NODE ID</th>
+                    <th style="padding: 8px 10px;">COLLECTOR ID</th>
+                    <th style="padding: 8px 10px;">LAST SEEN</th>
+                    <th style="padding: 8px 10px; text-align: right;">EVENTS</th>
+                    <th style="padding: 8px 10px;">ERRORS</th>
+                    <th style="padding: 8px 10px; text-align: right;">ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-collectors-tbody">
+                  <tr>
+                    <td colspan="8" style="padding: 20px; text-align: center; color: var(--text-muted);">
+                      Loading endpoints...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </div>
 
 
@@ -1739,7 +1816,7 @@
         <!-- =======================================================
              MODULE 3: KNOWLEDGE GRAPH & GRAPHOPS
              ======================================================= -->
-        <div id="view-knowledge-graph" class="view-pane">
+        <div id="view-knowledge-graph" class="view-pane active">
           <div id="view-graphops">
           
           <!-- Module 3 Header Banner -->
@@ -1758,9 +1835,9 @@
                     <line x1="12" y1="15" x2="5" y2="17"></line>
                     <line x1="12" y1="15" x2="19" y2="17"></line>
                   </svg>
-                  Knowledge Graph &amp; GraphOps
+                  GraphOps: Security Knowledge Graph &amp; Containment Engine
                 </h2>
-                <p class="module-subtitle">Enterprise Security Topology, Multi-Hop Attack Path Analysis, Blast-Radius Modeling, and Safe What-If Simulation</p>
+                <p class="module-subtitle">Proactive Multi-Hop Threat Hunting, Dijkstra Attack Paths, Strategic Choke Points, Real-Time Blast Radius &amp; Safe What-If Containment</p>
               </div>
 
               <div style="display: flex; align-items: center; gap: 10px; margin-left: auto;">
@@ -1804,7 +1881,13 @@
                 <line x1="12" y1="15" x2="5" y2="17"></line>
                 <line x1="12" y1="15" x2="19" y2="17"></line>
               </svg>
-              1. Attack Graph Explorer
+              1. Graph Ingestion &amp; Topology
+            </button>
+            <button type="button" class="case-tab-btn" id="tab-graphops-paths" data-mode="paths">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+              2. Attack Paths &amp; Choke Points
             </button>
             <button type="button" class="case-tab-btn active" id="tab-graphops-blast" data-mode="blast">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1812,19 +1895,13 @@
                 <circle cx="12" cy="12" r="6"></circle>
                 <circle cx="12" cy="12" r="2"></circle>
               </svg>
-              2. Blast Radius (1-Hop / 2-Hop / 3-Hop)
-            </button>
-            <button type="button" class="case-tab-btn" id="tab-graphops-paths" data-mode="paths">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
-              </svg>
-              3. Attack Paths &amp; Choke Points
+              3. Blast Radius &amp; Containment
             </button>
             <button type="button" class="case-tab-btn" id="tab-graphops-simulator" data-mode="simulator">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
-              4. What-If Containment Simulator
+              What-If Simulator
             </button>
             <button type="button" class="case-tab-btn" id="tab-graphops-anomalies" data-mode="anomalies">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1832,7 +1909,14 @@
                 <line x1="12" y1="8" x2="12" y2="12"></line>
                 <line x1="12" y1="16" x2="12.01" y2="16"></line>
               </svg>
-              5. Access Anomaly Detection
+              4. Graph AI &amp; Zero-Trust
+            </button>
+            <button type="button" class="case-tab-btn" id="tab-graphops-zerotrust" data-mode="zerotrust">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+              Entitled vs. Used Access
             </button>
             <button type="button" class="case-tab-btn" id="tab-graphops-communities" data-mode="communities">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1840,7 +1924,7 @@
                 <polyline points="2 17 12 22 22 17"></polyline>
                 <polyline points="2 12 12 17 22 12"></polyline>
               </svg>
-              6. Security Enclaves &amp; Communities
+              Security Communities
             </button>
             <button type="button" class="case-tab-btn" id="tab-graphops-findings" data-mode="findings">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1848,25 +1932,8 @@
                 <circle cx="11.5" cy="14.5" r="2.5"></circle>
                 <path d="M13.25 16.25 16 19"></path>
               </svg>
-              7. Tri-Detector Findings Stream
+              Telemetry Findings
               <span id="badge-findings-count" class="nav-badge" style="background: rgba(168, 85, 247, 0.2); color: #c084fc; margin-left: 6px;">0</span>
-            </button>
-            <button type="button" class="case-tab-btn" id="tab-graphops-zerotrust" data-mode="zerotrust">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-              </svg>
-              8. Zero-Trust Access Audit
-            </button>
-            <button type="button" class="case-tab-btn" id="tab-graphops-centrality" data-mode="centrality">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="18" cy="5" r="3"></circle>
-                <circle cx="6" cy="12" r="3"></circle>
-                <circle cx="18" cy="19" r="3"></circle>
-                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-              </svg>
-              9. Graph Centrality &amp; Disruption
             </button>
           </div>
 
@@ -2057,11 +2124,11 @@
             </div>
           </div>
 
-          <!-- Main Layout: Cytoscape Canvas on Left + Inspector / Cards on Right -->
-          <div style="display: grid; grid-template-columns: 1fr 380px; gap: 1.25rem; align-items: start;">
+          <!-- Standardized 65/35 Graph Workspace Split Layout (Phase 4) -->
+          <div class="graphops-workspace-split">
             
-            <!-- Cytoscape Graph Canvas Panel -->
-            <div class="glass-panel" style="position: relative;">
+            <!-- Cytoscape Graph Canvas Viewport (~65%) -->
+            <div class="graphops-split-canvas glass-panel" style="position: relative;">
               <div class="panel-header" style="padding: 10px 16px; border-bottom: 1px solid var(--border-subtle);">
                 <div style="font-size: 0.85rem; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
                   <span id="graphops-canvas-title">Neighborhood Topology View</span>
@@ -2109,8 +2176,8 @@
               </div>
             </div>
 
-            <!-- Right Sidebar: Inspector & Analytics Panel -->
-            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+            <!-- Contextual Analytics & Action Sidebar (~35%) -->
+            <div class="graphops-split-sidebar">
 
               <!-- Summary Assessment Card -->
               <div class="glass-panel" id="graphops-assessment-card" style="padding: 14px 16px;">
@@ -2309,6 +2376,16 @@
 
                 <div style="font-size: 0.72rem; color: var(--text-muted); font-style: italic; margin-top: 10px;">
                   Safety Guarantee: Simulation executed strictly against an in-memory graph projection. No live directory accounts were altered and no firewall rules were modified.
+                </div>
+
+                <div style="display: flex; justify-content: flex-end; margin-top: 14px;">
+                  <button type="button" class="btn-primary" id="btn-export-containment-proof" style="font-size: 0.78rem; padding: 6px 14px; cursor: pointer;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                      <polyline points="14 2 14 8 20 8"></polyline>
+                    </svg>
+                    Export Signed Containment Dossier (SHA-256) &rarr;
+                  </button>
                 </div>
               </div>
             </div>
@@ -2636,6 +2713,156 @@
         </div> <!-- /#view-graphops -->
       </div> <!-- /#view-knowledge-graph -->
 
+      <!-- =======================================================
+           MODULE 6: REMOTE WINDOWS LOG COLLECTORS
+           ======================================================= -->
+      <div id="view-collectors" class="view-pane">
+        <div id="view-collectors-content">
+          <!-- Header Banner -->
+          <div class="glass-panel" style="margin-bottom: 1.25rem;">
+            <div class="panel-header" style="flex-wrap: wrap; gap: 12px; justify-content: space-between;">
+              <div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <h2 class="panel-title" style="font-size: 1.25rem;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--brand-cyan);">
+                      <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                      <line x1="8" y1="21" x2="16" y2="21"></line>
+                      <line x1="12" y1="17" x2="12" y2="21"></line>
+                    </svg>
+                    Connect Computer: Remote Windows Log Ingestion
+                  </h2>
+                  <span id="collectors-active-pill" class="status-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3);">
+                    Endpoint Pipeline Active
+                  </span>
+                </div>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+                  Enrol Windows endpoints, provision cryptographically secured tokens, and stream authenticated Windows Security Events (4624, 4625, 4688, 5140, etc.) into the GraphOps Kafka-Neo4j engine.
+                </p>
+              </div>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <button type="button" id="btn-refresh-collectors" class="btn-table-action" style="font-size: 0.82rem; padding: 6px 14px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                  </svg>
+                  Refresh Status
+                </button>
+                <button type="button" id="btn-open-enrol-modal" class="btn-primary" style="font-size: 0.85rem; padding: 7px 16px; background: var(--brand-cyan); color: #020617; font-weight: 700; border-radius: var(--radius-sm);">
+                  + Enrol New Computer
+                </button>
+              </div>
+            </div>
+
+            <!-- Connection Status Notice -->
+            <div style="margin-top: 10px; padding: 10px 14px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid #3b82f6; border-radius: 4px; font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4;">
+              <strong style="color: #60a5fa;">Strict Delivery Verification:</strong>
+              Endpoints are only marked <em>Connected / Actively Sending</em> once real, verified security events are ingested and published to Kafka. Generating credentials merely places an endpoint in <em>Enrolled (Pending First Event)</em> status.
+            </div>
+          </div>
+
+          <!-- Metric Cards Row -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Enrolled Computers</div>
+                <div class="metric-value" id="metric-collectors-total">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(59, 130, 246, 0.1); color: #60a5fa;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Actively Sending</div>
+                <div class="metric-value" id="metric-collectors-active" style="color: #10b981;">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(16, 185, 129, 0.1); color: #10b981;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Events Ingested</div>
+                <div class="metric-value" id="metric-collectors-events" style="color: var(--brand-cyan);">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(56, 189, 248, 0.1); color: var(--brand-cyan);">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Ingestion Errors</div>
+                <div class="metric-value" id="metric-collectors-errors" style="color: #f87171;">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(239, 68, 68, 0.1); color: #f87171;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step-by-Step Instructions Panel -->
+          <div class="glass-panel" style="margin-bottom: 1.25rem; padding: 1.25rem;">
+            <h3 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 8px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #f59e0b;"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+              Quick Setup &amp; Deployment Guide for Windows Administrators
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; font-size: 0.8rem;">
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <strong style="color: var(--brand-cyan);">Step 1: Enrol Endpoint</strong>
+                <p style="color: var(--text-muted); margin-top: 4px; font-size: 0.76rem;">Click <strong>+ Enrol New Computer</strong> above. Specify the target Windows hostname to generate a unique Collector ID and one-time secret token.</p>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <strong style="color: var(--brand-cyan);">Step 2: Deploy Agent</strong>
+                <p style="color: var(--text-muted); margin-top: 4px; font-size: 0.76rem;">Copy <code>collector/</code> to the endpoint or run <code>scripts\install.bat</code> as Administrator. Saves config to <code>C:\ThreatLensCollector\config.json</code>.</p>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <strong style="color: var(--brand-cyan);">Step 3: Enable Audit Policy</strong>
+                <p style="color: var(--text-muted); margin-top: 4px; font-size: 0.76rem;">Administrator must manually enable: <code>auditpol /set /subcategory:"Logon" /success:enable /failure:enable</code> and Process Creation auditing.</p>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <strong style="color: var(--brand-cyan);">Step 4: Verify Transmission</strong>
+                <p style="color: var(--text-muted); margin-top: 4px; font-size: 0.76rem;">Execute <code>python threatlens_collector.py --run-once</code>. Watch table below transition from <em>Enrolled</em> to <em>Actively Sending</em>.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Collectors Table Panel -->
+          <div class="glass-panel" style="padding: 1.25rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3 style="font-size: 1rem; font-weight: 700; color: #f8fafc;">Enrolled Windows Endpoints</h3>
+              <span id="collector-count-caption" style="font-size: 0.78rem; color: var(--text-muted);">0 computers enrolled</span>
+            </div>
+            <div style="overflow-x: auto;">
+              <table class="data-table" id="table-collectors" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                <thead>
+                  <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); text-align: left;">
+                    <th style="padding: 10px 12px;">STATUS</th>
+                    <th style="padding: 10px 12px;">HOSTNAME</th>
+                    <th style="padding: 10px 12px;">CANONICAL NODE ID</th>
+                    <th style="padding: 10px 12px;">COLLECTOR ID</th>
+                    <th style="padding: 10px 12px;">LAST SEEN</th>
+                    <th style="padding: 10px 12px; text-align: right;">EVENTS</th>
+                    <th style="padding: 10px 12px;">RECENT ERRORS</th>
+                    <th style="padding: 10px 12px; text-align: right;">ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="collectors-table-body">
+                  <tr>
+                    <td colspan="8" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                      Loading enrolled collectors...
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
       </main>
     </div>
   </div>
@@ -2729,6 +2956,98 @@
           Explore Entity on Graph Canvas &rarr;
         </button>
         <button type="button" class="btn-primary" id="btn-close-finding-footer" style="padding: 6px 18px; font-size: 0.85rem;">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Enrol New Collector -->
+  <div id="modal-enrol-collector" class="modal-backdrop" style="display: none;">
+    <div class="modal-card" style="max-width: 580px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-subtle);">
+        <h3 style="font-size: 1.1rem; color: #f8fafc; margin: 0; display: flex; align-items: center; gap: 8px;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--brand-cyan);"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
+          Enrol New Windows Computer
+        </h3>
+        <button type="button" id="btn-close-enrol-modal" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1;">&times;</button>
+      </div>
+
+      <!-- Step 1: Input Form -->
+      <div id="enrol-form-step" style="padding: 20px;">
+        <p style="font-size: 0.82rem; color: var(--text-secondary); margin-bottom: 16px;">
+          Authorise a Windows endpoint to stream event logs to ThreatLens. A unique cryptographic token will be generated.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+          <div>
+            <label style="display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 6px;">
+              Windows Computer Hostname *
+            </label>
+            <input type="text" id="enrol-hostname-input" placeholder="e.g. DESKTOP-SEC01 or WIN-SRV-FINANCE" style="width: 100%; padding: 8px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-medium); border-radius: var(--radius-sm); color: #fff; font-family: var(--font-mono); font-size: 0.85rem;" required />
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 6px;">
+                IP Address (Optional)
+              </label>
+              <input type="text" id="enrol-ip-input" placeholder="e.g. 192.168.1.105" style="width: 100%; padding: 8px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-medium); border-radius: var(--radius-sm); color: #fff; font-family: var(--font-mono); font-size: 0.85rem;" />
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 6px;">
+                Operating System
+              </label>
+              <input type="text" id="enrol-os-input" value="Windows 11 Enterprise" style="width: 100%; padding: 8px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-medium); border-radius: var(--radius-sm); color: #fff; font-size: 0.85rem;" />
+            </div>
+          </div>
+        </div>
+
+        <div id="enrol-error-msg" style="display: none; margin-top: 14px; padding: 10px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 4px; color: #f87171; font-size: 0.8rem;"></div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" id="btn-cancel-enrol" class="btn-secondary" style="padding: 8px 16px;">Cancel</button>
+          <button type="button" id="btn-submit-enrol" class="btn-primary" style="padding: 8px 20px; background: var(--brand-cyan); color: #020617; font-weight: 700;">Generate Credentials &amp; Enrol</button>
+        </div>
+      </div>
+
+      <!-- Step 2: Credentials Result Display -->
+      <div id="enrol-result-step" style="display: none; padding: 20px;">
+        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: var(--radius-sm); padding: 12px 16px; margin-bottom: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; color: #10b981; font-weight: 700; font-size: 0.9rem;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            Endpoint Enrolled Successfully
+          </div>
+          <p style="font-size: 0.78rem; color: #cbd5e1; margin-top: 4px;">
+            Copy this token now. It is hashed on the server and cannot be viewed again.
+          </p>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 18px;">
+          <div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Collector ID:</span>
+            <div style="display: flex; gap: 8px; margin-top: 2px;">
+              <input type="text" id="result-collector-id" readonly style="flex: 1; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: 4px; font-family: var(--font-mono); font-size: 0.85rem; color: var(--brand-cyan);" />
+              <button type="button" id="btn-copy-collector-id" class="btn-table-action" style="padding: 6px 12px;">Copy</button>
+            </div>
+          </div>
+
+          <div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Secret Token (Single Use Display):</span>
+            <div style="display: flex; gap: 8px; margin-top: 2px;">
+              <input type="text" id="result-token" readonly style="flex: 1; padding: 6px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: 4px; font-family: var(--font-mono); font-size: 0.85rem; color: #38bdf8;" />
+              <button type="button" id="btn-copy-token" class="btn-table-action" style="padding: 6px 12px;">Copy</button>
+            </div>
+          </div>
+
+          <div>
+            <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Target Canonical Node:</span>
+            <div id="result-node-id" style="font-family: var(--font-mono); font-size: 0.85rem; color: #f59e0b; margin-top: 2px;">-</div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-subtle); padding-top: 16px;">
+          <button type="button" id="btn-download-config-generated" class="btn-table-action" style="color: var(--brand-cyan); border-color: rgba(56, 189, 248, 0.4);">
+            Download config.json
+          </button>
+          <button type="button" id="btn-done-enrol" class="btn-primary" style="padding: 6px 20px;">Done</button>
+        </div>
       </div>
     </div>
   </div>
