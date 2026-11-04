@@ -5,7 +5,7 @@ blast-radius requests/results, attack-path discovery, choke-point analysis,
 and what-if containment simulation contracts.
 """
 
-from typing import List, Dict, Optional, Any, Set
+from typing import List, Dict, Optional, Any, Set, Union
 from enum import Enum
 from datetime import datetime, timezone
 import re
@@ -32,10 +32,10 @@ from backend.graphops.schema import (
 
 class UserNode(BaseModel):
     """Corporate employee or service account identity."""
-    id: str = Field(description="Canonical node ID e.g. user:alice@corp.com or user:usr-101")
-    user_id: str = Field(description="Native identifier e.g. USR-101 or alice@corp.com")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. user:alice@corp.com or user:usr-101")
+    user_id: str = Field(min_length=1, description="Native identifier e.g. USR-101 or alice@corp.com")
     email: str = Field(description="Corporate email address")
-    name: str = Field(description="Full name of user")
+    name: str = Field(min_length=1, description="Full name of user")
     department: str = Field(default="Unassigned", description="Corporate department")
     role: str = Field(default="Standard User", description="Assigned role or title")
     is_service_account: bool = Field(default=False, description="Whether account is a non-human service principal")
@@ -43,17 +43,27 @@ class UserNode(BaseModel):
     status: str = Field(default="ACTIVE", description="Account status: ACTIVE, SUSPENDED, DECOMMISSIONED")
     data: Dict[str, Any] = Field(default_factory=dict, description="Arbitrary directory metadata")
 
+    @field_validator("email")
+    @classmethod
+    def validate_user_email(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean):
+            raise ValueError(f"Invalid email address format: '{v}'")
+        return clean
+
     @field_validator("id", mode="before")
     @classmethod
-    def set_canonical_id(cls, v: str, info) -> str:
+    def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.USER, v)
 
 
 class DeviceNode(BaseModel):
     """Physical or virtual workstation/endpoint."""
-    id: str = Field(description="Canonical node ID e.g. device:dev-ws-109")
-    device_id: str = Field(description="Asset tag or device hostname e.g. DEV-WS-109")
-    hostname: str = Field(description="DNS or NetBIOS hostname")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. device:dev-ws-109")
+    device_id: str = Field(min_length=1, description="Asset tag or device hostname e.g. DEV-WS-109")
+    hostname: str = Field(min_length=1, description="DNS or NetBIOS hostname")
     ip_address: str = Field(description="Current primary assigned IP address")
     mac_address: Optional[str] = Field(default=None, description="Hardware MAC address")
     os: str = Field(default="Windows 11 Enterprise", description="Operating system release")
@@ -62,18 +72,30 @@ class DeviceNode(BaseModel):
     criticality: CriticalityTier = Field(default=CriticalityTier.LOW, description="Asset criticality tier")
     data: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("ip_address")
+    @classmethod
+    def validate_device_ip(cls, v: str) -> str:
+        clean = v.strip()
+        try:
+            ipaddress.ip_address(clean)
+        except ValueError:
+            raise ValueError(f"Invalid IP address format: '{v}'")
+        return clean
+
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.DEVICE, v)
 
 
 class ServerNode(BaseModel):
     """Core infrastructure server or virtualization host."""
-    id: str = Field(description="Canonical node ID e.g. server:srv-app-01")
-    server_id: str = Field(description="Infrastructure server ID e.g. SRV-APP-01")
-    name: str = Field(description="Display server name")
-    hostname: str = Field(description="FQDN or internal hostname")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. server:srv-app-01")
+    server_id: str = Field(min_length=1, description="Infrastructure server ID e.g. SRV-APP-01")
+    name: str = Field(min_length=1, description="Display server name")
+    hostname: str = Field(min_length=1, description="FQDN or internal hostname")
     ip_address: str = Field(description="Static network IP address")
     tier: str = Field(default="Application", description="Architectural tier: Web, Application, Database, Core, DMZ")
     environment: str = Field(default="Production", description="Deployment environment: Production, Staging, Dev")
@@ -81,17 +103,29 @@ class ServerNode(BaseModel):
     is_isolated: bool = Field(default=False, description="Whether server is network-isolated")
     data: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("ip_address")
+    @classmethod
+    def validate_server_ip(cls, v: str) -> str:
+        clean = v.strip()
+        try:
+            ipaddress.ip_address(clean)
+        except ValueError:
+            raise ValueError(f"Invalid IP address format: '{v}'")
+        return clean
+
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.SERVER, v)
 
 
 class ApplicationNode(BaseModel):
     """Internal enterprise application or microservice."""
-    id: str = Field(description="Canonical node ID e.g. app:payment-gateway")
-    app_id: str = Field(description="Application key e.g. APP-PAY-01")
-    name: str = Field(description="Application title")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. app:payment-gateway")
+    app_id: str = Field(min_length=1, description="Application key e.g. APP-PAY-01")
+    name: str = Field(min_length=1, description="Application title")
     version: Optional[str] = Field(default="1.0.0", description="Software version")
     port: Optional[int] = Field(default=None, description="Standard listening TCP/UDP port")
     service_type: str = Field(default="API", description="Service category: Web, API, Batch, DB, Auth")
@@ -101,13 +135,36 @@ class ApplicationNode(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.APPLICATION, v)
+
+
+class DatabaseNode(BaseModel):
+    """Core relational, document, or in-memory data store."""
+    id: str = Field(min_length=1, description="Canonical node ID e.g. db:db-cust-01")
+    db_id: str = Field(min_length=1, description="Infrastructure database ID e.g. DB-CUST-01")
+    name: str = Field(min_length=1, description="Display database name e.g. Customer Relational Database")
+    engine: str = Field(default="PostgreSQL", description="Database engine: PostgreSQL, MySQL, Oracle, MongoDB, Redis, MSSQL")
+    port: Optional[int] = Field(default=5432, description="Listening TCP port")
+    tier: str = Field(default="Database", description="Architectural tier: Database, Cache, DataLake")
+    environment: str = Field(default="Production", description="Deployment environment: Production, Staging, Dev")
+    is_clustered: bool = Field(default=False, description="Whether database is part of a high-availability cluster")
+    criticality: CriticalityTier = Field(default=CriticalityTier.HIGH, description="Asset criticality tier")
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
+        return canonicalize_node_id(NodeLabel.DATABASE, v)
 
 
 class IpAddressNode(BaseModel):
     """Observed network IP entity."""
-    id: str = Field(description="Canonical node ID e.g. ip:10.0.1.15")
-    ip: str = Field(description="Valid IPv4 or IPv6 string")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. ip:10.0.1.15")
+    ip: str = Field(min_length=1, description="Valid IPv4 or IPv6 string")
     version: int = Field(default=4, description="IP protocol version (4 or 6)")
     scope: str = Field(default="internal", description="Scope: internal, public, loopback, reserved")
     subnet: Optional[str] = Field(default=None, description="Subnet CIDR")
@@ -126,13 +183,15 @@ class IpAddressNode(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.IP_ADDRESS, v)
 
 
 class VulnerabilityNode(BaseModel):
     """CVE or software security vulnerability."""
-    id: str = Field(description="Canonical node ID e.g. vuln:CVE-2024-21413")
-    cve_id: str = Field(description="Standard Common Vulnerabilities and Exposures identifier e.g. CVE-2024-21413")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. vuln:CVE-2024-21413")
+    cve_id: str = Field(min_length=1, description="Standard Common Vulnerabilities and Exposures identifier e.g. CVE-2024-21413")
     cvss_score: float = Field(ge=0.0, le=10.0, description="Common Vulnerability Scoring System score (0.0 to 10.0)")
     severity: CriticalityTier = Field(description="Severity tier: LOW, MEDIUM, HIGH, CRITICAL")
     description: str = Field(default="", description="Summary of vulnerability and exploit mechanism")
@@ -150,14 +209,16 @@ class VulnerabilityNode(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.VULNERABILITY, v)
 
 
 class CriticalAssetNode(BaseModel):
     """High-value Crown Jewel asset (e.g. Domain Controller, Customer PII DB, SWIFT gateway)."""
-    id: str = Field(description="Canonical node ID e.g. critical:crit-db-01")
-    asset_id: str = Field(description="High-value asset key e.g. CRIT-DB-01")
-    name: str = Field(description="Asset title e.g. Customer Core PII Database")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. critical:crit-db-01")
+    asset_id: str = Field(min_length=1, description="High-value asset key e.g. CRIT-DB-01")
+    name: str = Field(min_length=1, description="Asset title e.g. Customer Core PII Database")
     category: str = Field(
         description="Category: CUSTOMER_PII, FINANCIAL_RECORDS, DOMAIN_CONTROLLER, SOURCE_CODE, CREDENTIAL_STORE, INTELLECTUAL_PROPERTY"
     )
@@ -169,29 +230,44 @@ class CriticalAssetNode(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.CRITICAL_ASSET, v)
 
 
 class SecurityEventNode(BaseModel):
     """Audit reference or security alert node linking evidence to the graph."""
-    id: str = Field(description="Canonical node ID e.g. event:evt-8821")
-    event_id: str = Field(description="Event identifier")
-    event_type: str = Field(description="Event classification: PHISHING_INCIDENT, PRIVILEGE_ESCALATION, LATERAL_MOVEMENT")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. event:evt-8821")
+    event_id: str = Field(min_length=1, description="Event identifier")
+    event_type: str = Field(min_length=1, description="Event classification: PHISHING_INCIDENT, PRIVILEGE_ESCALATION, LATERAL_MOVEMENT")
     severity: CriticalityTier = Field(default=CriticalityTier.HIGH)
     timestamp: str = Field(description="ISO 8601 incident timestamp")
     case_id: Optional[str] = Field(default=None, description="Associated ThreatLens investigation case ID (e.g. MT-101)")
     provenance: str = Field(default="ThreatLens Forensic Pipeline")
     data: Dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("timestamp")
+    @classmethod
+    def validate_event_timestamp(cls, v: str) -> str:
+        clean = v.strip()
+        try:
+            iso_str = clean.replace("Z", "+00:00")
+            datetime.fromisoformat(iso_str)
+        except Exception:
+            raise ValueError(f"Invalid ISO 8601 timestamp format: '{v}'")
+        return clean
+
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.SECURITY_EVENT, v)
 
 
 class EmailAccountNode(BaseModel):
     """Email identity/mailbox mapped to organizational users or external correspondents."""
-    id: str = Field(description="Canonical node ID e.g. email:alice@corp.com")
+    id: str = Field(min_length=1, description="Canonical node ID e.g. email:alice@corp.com")
     email_address: str = Field(description="RFC 5322 formatted email address")
     account_name: Optional[str] = Field(default=None, description="Display name or mailbox owner")
     domain: Optional[str] = Field(default=None, description="Email domain e.g. corp.com")
@@ -211,6 +287,8 @@ class EmailAccountNode(BaseModel):
     @field_validator("id", mode="before")
     @classmethod
     def set_canonical_id(cls, v: str) -> str:
+        if not v or not str(v).strip():
+            raise ValueError("id cannot be empty")
         return canonicalize_node_id(NodeLabel.EMAIL_ACCOUNT, v)
 
     @model_validator(mode="after")
@@ -303,15 +381,18 @@ class EntityIngestRequest(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Batch ingestion ISO timestamp"
     )
-    users: List[UserNode] = Field(default_factory=list)
-    devices: List[DeviceNode] = Field(default_factory=list)
-    servers: List[ServerNode] = Field(default_factory=list)
-    applications: List[ApplicationNode] = Field(default_factory=list)
-    ips: List[IpAddressNode] = Field(default_factory=list)
-    vulnerabilities: List[VulnerabilityNode] = Field(default_factory=list)
-    critical_assets: List[CriticalAssetNode] = Field(default_factory=list)
-    security_events: List[SecurityEventNode] = Field(default_factory=list)
-    email_accounts: List[EmailAccountNode] = Field(default_factory=list)
+    users: List[Union[UserNode, Dict[str, Any]]] = Field(default_factory=list)
+    devices: List[Union[DeviceNode, Dict[str, Any]]] = Field(default_factory=list)
+    servers: List[Union[ServerNode, Dict[str, Any]]] = Field(default_factory=list)
+    applications: List[Union[ApplicationNode, Dict[str, Any]]] = Field(default_factory=list)
+    databases: List[Union[DatabaseNode, Dict[str, Any]]] = Field(default_factory=list)
+    ips: List[Union[IpAddressNode, Dict[str, Any]]] = Field(default_factory=list)
+    vulnerabilities: List[Union[VulnerabilityNode, Dict[str, Any]]] = Field(default_factory=list)
+    critical_assets: List[Union[CriticalAssetNode, Dict[str, Any]]] = Field(default_factory=list)
+    security_events: List[Union[SecurityEventNode, Dict[str, Any]]] = Field(default_factory=list)
+    email_accounts: List[Union[EmailAccountNode, Dict[str, Any]]] = Field(default_factory=list)
+    rejected_count: int = Field(default=0, description="Count of entities rejected during pre-parsing")
+    parsing_errors: List[str] = Field(default_factory=list, description="Parsing errors encountered")
 
 
 class RelationshipIngestRequest(BaseModel):
@@ -321,7 +402,9 @@ class RelationshipIngestRequest(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat(),
         description="Batch ingestion ISO timestamp"
     )
-    relationships: List[EnterpriseRelationship] = Field(default_factory=list)
+    relationships: List[Union[EnterpriseRelationship, Dict[str, Any]]] = Field(default_factory=list)
+    rejected_count: int = Field(default=0, description="Count of relationships rejected during pre-parsing")
+    parsing_errors: List[str] = Field(default_factory=list, description="Parsing errors encountered")
 
 
 class BulkIngestPayload(BaseModel):
