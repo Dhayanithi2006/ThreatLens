@@ -20,7 +20,7 @@ class InMemoryGraphOpsClient:
         for n in nodes:
             nid = n["id"].lower()
             props = n.get("properties", {})
-            for key in ["email", "hostname", "user_id", "device_id", "server_id", "asset_id"]:
+            for key in ["email", "hostname", "user_id", "device_id", "server_id", "db_id", "app_id", "asset_id"]:
                 val = props.get(key)
                 if val:
                     self.aliases[str(val).lower()] = nid
@@ -65,7 +65,7 @@ class InMemoryGraphOpsClient:
             return {"nodes_created": nodes_created, "properties_set": len(batch)}
 
         # Handle batch relationship UNWIND
-        if "UNWIND $batch AS item" in q and ("MERGE (src)-[r:" in q or "MERGE (s)-[r:" in q or "CREATE (src)-[r:" in q):
+        if ("UNWIND $batch AS item" in q or "UNWIND $batch AS rel" in q) and ("MERGE (src)-[r:" in q or "MERGE (s)-[r:" in q or "MERGE (s:" in q or "CREATE (src)-[r:" in q):
             batch = params.get("batch", [])
             for item in batch:
                 rel_type = item.get("type", "CONNECTED_TO")
@@ -87,14 +87,17 @@ class InMemoryGraphOpsClient:
         q = query.strip()
 
         # 1. Node Resolution Query
-        if "WHERE n.id = $id" in q or "toLower(n.id) = toLower($id)" in q:
-            target_id = str(params.get("id", "")).lower()
-            id_without_prefix = str(params.get("id_without_prefix", "")).lower()
+        if ("WHERE n.id =" in q or "WHERE n.id = $id" in q or "toLower(n.id) = toLower($id)" in q or "OPTIONAL MATCH" in q or "coalesce(u, d, s" in q):
+            target_id = str(params.get("id") or params.get("clean_id") or params.get("canonical_id") or "").lower()
+            id_without_prefix = str(params.get("id_without_prefix") or "").lower()
+            id_lower = str(params.get("id_lower") or "").lower()
 
             resolved = (
                 self.nodes.get(target_id)
+                or self.nodes.get(id_lower)
                 or self.nodes.get(id_without_prefix)
                 or self.aliases.get(target_id)
+                or self.aliases.get(id_lower)
                 or self.aliases.get(id_without_prefix)
             )
             if resolved:

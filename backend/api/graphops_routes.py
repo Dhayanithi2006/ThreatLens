@@ -137,28 +137,33 @@ async def ingest_sample_fixture_endpoint(
     from backend.graphops.ingest import GraphOpsIngestionEngine
     try:
         client.verify_connectivity()
+    except GraphOpsConnectionError as e:
+        logger.error(f"Neo4j offline during sample fixture ingestion: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database unreachable during sample fixture ingestion: {str(e)}",
+        )
+    except Exception as e:
+        logger.error(f"Neo4j connectivity error during sample fixture ingestion: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connectivity check failed: {str(e)}",
+        )
+
+    try:
         engine = GraphOpsIngestionEngine(client)
         summary = engine.ingest_sample_fixture()
         return summary.model_dump()
-    except (GraphOpsConnectionError, Exception) as e:
-        logger.warning(f"Neo4j offline during sample fixture ingestion; serving in-memory demonstration replica: {e}")
-        from backend.graphops.mock_client import get_mock_graphops_client
-        from datetime import datetime, timezone
-        mock_c = get_mock_graphops_client()
-        return {
-            "status": "SUCCESS",
-            "dataset_name": "simulated_soc_enterprise_fixture_v1",
-            "nodes_imported": len(mock_c.nodes),
-            "nodes_updated": 0,
-            "nodes_rejected": 0,
-            "relationships_imported": len(mock_c.edges),
-            "relationships_updated": 0,
-            "relationships_rejected": 0,
-            "errors": [],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "nodes_created_or_updated": len(mock_c.nodes),
-            "relationships_created_or_updated": len(mock_c.edges),
-        }
+    except GraphOpsConnectionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database connection error during sample fixture ingestion: {str(e)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to ingest sample fixture: {str(e)}",
+        )
 
 
 @router.post(
