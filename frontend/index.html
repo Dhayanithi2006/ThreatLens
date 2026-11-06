@@ -15,7 +15,7 @@
 <body>
 
   <div class="app-shell">
-    
+
     <!-- =======================================================
          SIDEBAR NAVIGATION
          ======================================================= -->
@@ -141,7 +141,7 @@
          MAIN CONTENT WRAPPER
          ======================================================= -->
     <div class="main-wrapper">
-      
+
       <!-- Topbar Header -->
       <header class="topbar">
         <div class="topbar-left">
@@ -177,7 +177,7 @@
              VIEW 1: DASHBOARD
              ======================================================= -->
         <div id="view-dashboard" class="view-pane">
-          
+
           <!-- Summary Metrics Cards -->
           <div class="metrics-grid">
             <div class="metric-card">
@@ -276,7 +276,7 @@
 
           <!-- 2-Column Dashboard Body -->
           <div class="dashboard-2col">
-            
+
             <!-- Recent Investigations Table -->
             <div class="glass-panel">
               <div class="panel-header">
@@ -331,7 +331,7 @@
           <div class="glass-panel" style="margin-top: 1.5rem; padding: 18px 20px;" id="dash-endpoint-telemetry-panel">
             <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
               <div>
-                <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                   <h3 class="panel-title" style="font-size: 1.05rem;">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--brand-cyan);">
                       <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
@@ -343,9 +343,16 @@
                   <span id="dash-collectors-status-pill" class="status-badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3);">
                     Windows Collection Engine
                   </span>
+                  <!-- Infrastructure Connectivity Status Badges -->
+                  <span id="dash-neo4j-status-badge" class="status-badge" style="background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.72rem;">
+                    Neo4j: Online
+                  </span>
+                  <span id="dash-kafka-status-badge" class="status-badge" style="background: rgba(56, 189, 248, 0.12); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 0.72rem;">
+                    Kafka: Online
+                  </span>
                 </div>
                 <p style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 4px;">
-                  Stream authenticated Windows Security Events (4624, 4625, 4688, 5140, 5156) from authorized endpoints into the Kafka pipeline &amp; Neo4j knowledge graph.
+                  Stream authenticated Windows Security Events (4624, 4625, 4688, 5140) from authorized endpoints into the Kafka pipeline &amp; Neo4j knowledge graph.
                 </p>
               </div>
               <div style="display: flex; gap: 10px; align-items: center;">
@@ -358,19 +365,27 @@
               </div>
             </div>
 
-            <!-- Endpoint Telemetry Metrics Bar -->
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 14px;">
+            <!-- Endpoint Telemetry Metrics Bar (6 Metrics) -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px;">
               <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Enrolled Computers</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Total Devices</div>
                 <div id="dash-metric-collectors-total" style="font-size: 1.3rem; font-weight: 800; color: #f8fafc; margin-top: 2px;">0</div>
               </div>
               <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Actively Sending</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Online Collectors</div>
                 <div id="dash-metric-collectors-active" style="font-size: 1.3rem; font-weight: 800; color: #10b981; margin-top: 2px;">0</div>
               </div>
               <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Events Ingested</div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Offline / Enrolled</div>
+                <div id="dash-metric-collectors-offline" style="font-size: 1.3rem; font-weight: 800; color: #94a3b8; margin-top: 2px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Total Events Received</div>
                 <div id="dash-metric-collectors-events" style="font-size: 1.3rem; font-weight: 800; color: var(--brand-cyan); margin-top: 2px;">0</div>
+              </div>
+              <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Auth Failures</div>
+                <div id="dash-metric-collectors-auth-failures" style="font-size: 1.3rem; font-weight: 800; color: #fbbf24; margin-top: 2px;">0</div>
               </div>
               <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
                 <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Ingestion Errors</div>
@@ -379,7 +394,7 @@
             </div>
 
             <!-- Collectors Table -->
-            <div style="overflow-x: auto;">
+            <div style="overflow-x: auto; margin-bottom: 16px;">
               <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
                 <thead>
                   <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); text-align: left;">
@@ -389,19 +404,56 @@
                     <th style="padding: 8px 10px;">COLLECTOR ID</th>
                     <th style="padding: 8px 10px;">LAST SEEN</th>
                     <th style="padding: 8px 10px; text-align: right;">EVENTS</th>
+                    <th style="padding: 8px 10px;">PENDING SPOOL</th>
                     <th style="padding: 8px 10px;">ERRORS</th>
                     <th style="padding: 8px 10px; text-align: right;">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody id="dash-collectors-tbody">
                   <tr>
-                    <td colspan="8" style="padding: 20px; text-align: center; color: var(--text-muted);">
+                    <td colspan="9" style="padding: 20px; text-align: center; color: var(--text-muted);">
                       Loading endpoints...
                     </td>
                   </tr>
                 </tbody>
               </table>
             </div>
+
+            <!-- Recent Ingestion Activity Log Subpanel -->
+            <div style="border-top: 1px solid var(--border-subtle); padding-top: 14px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <h4 style="font-size: 0.85rem; font-weight: 700; color: #cbd5e1; margin: 0; display: flex; align-items: center; gap: 6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--brand-cyan);">
+                    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                  </svg>
+                  Recent Ingestion Activity Stream
+                </h4>
+                <span id="dash-activity-count-badge" style="font-size: 0.72rem; color: var(--text-muted);">Live Event Feed</span>
+              </div>
+              <div style="overflow-x: auto; max-height: 180px; overflow-y: auto;">
+                <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.75rem;">
+                  <thead>
+                    <tr style="border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); text-align: left;">
+                      <th style="padding: 6px 8px;">TIME</th>
+                      <th style="padding: 6px 8px;">ENDPOINT / COLLECTOR</th>
+                      <th style="padding: 6px 8px;">ACCEPTED</th>
+                      <th style="padding: 6px 8px;">REJECTED</th>
+                      <th style="padding: 6px 8px;">DUPLICATE</th>
+                      <th style="padding: 6px 8px;">PROVENANCE</th>
+                      <th style="padding: 6px 8px;">STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dash-recent-activity-tbody">
+                    <tr>
+                      <td colspan="7" style="padding: 12px; text-align: center; color: var(--text-muted);">
+                        No recent ingestion events recorded.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
           </div>
 
 
@@ -414,7 +466,7 @@
              MODULE 2: ALERTS & INCIDENTS
              ======================================================= -->
         <div id="view-alerts-incidents" class="view-pane">
-          
+
           <div class="module-header-banner">
             <div class="module-header-row">
               <div class="module-title-box">
@@ -480,14 +532,24 @@
                 <div>
                   <h3 class="panel-title">Correlated Security Alerts Stream</h3>
                   <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
-                    Real-time tri-detector findings and ingested event anomalies
+                    Real-time case alerts, graph security findings, and endpoint telemetry anomalies
                   </div>
                 </div>
                 <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                  <button type="button" class="filter-chip active" data-alert-filter="ALL" id="chip-alert-all">All Alerts</button>
+                  <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700;">SEVERITY:</span>
+                  <button type="button" class="filter-chip active" data-alert-filter="ALL" id="chip-alert-all">All</button>
                   <button type="button" class="filter-chip" data-alert-filter="CRITICAL" id="chip-alert-crit">Critical</button>
                   <button type="button" class="filter-chip" data-alert-filter="HIGH" id="chip-alert-high">High</button>
                   <button type="button" class="filter-chip" data-alert-filter="MEDIUM" id="chip-alert-med">Medium</button>
+
+                  <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: 700; margin-left: 8px;">SOURCE:</span>
+                  <button type="button" class="filter-chip active" data-alert-type-filter="ALL" id="chip-type-all">All Sources</button>
+                  <button type="button" class="filter-chip" data-alert-type-filter="case_alert" id="chip-type-cases">Cases</button>
+                  <button type="button" class="filter-chip" data-alert-type-filter="graph_finding" id="chip-type-graph">Graph Findings</button>
+                  <button type="button" class="filter-chip" data-alert-type-filter="telemetry_alert" id="chip-type-telemetry">Telemetry</button>
+
+                  <input type="text" class="topbar-search-input" id="alerts-filter-search" placeholder="Search alerts..." style="width: 170px; height: 28px; padding: 2px 8px; font-size: 0.78rem;">
+                  <button type="button" class="btn-table-action" id="btn-refresh-alerts" style="padding: 4px 10px; font-size: 0.78rem;">↻ Refresh</button>
                 </div>
               </div>
 
@@ -500,11 +562,12 @@
                       <th>Detector Source</th>
                       <th>Affected Entity</th>
                       <th>Finding / Event Description</th>
+                      <th>Status</th>
                       <th>Action</th>
                     </tr>
                   </thead>
                   <tbody id="alerts-stream-tbody">
-                    <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px 0;">No active alerts loaded. Stream telemetry or select an incident below.</td></tr>
+                    <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px 0;">No active alerts loaded. Stream telemetry or select an incident below.</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -515,7 +578,7 @@
           <div id="ai-pane-incidents" class="module-tab-pane active">
             <div id="view-investigations">
           <div class="glass-panel">
-            <div class="panel-header">
+            <div class="panel-header" style="flex-wrap: wrap; gap: 12px;">
               <div>
                 <h2 class="panel-title">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -528,8 +591,18 @@
                 </div>
               </div>
 
-              <div style="display: flex; gap: 8px;">
-                <input type="text" class="topbar-search-input" id="cases-filter-search" placeholder="Filter cases..." style="width: 220px;">
+              <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <select class="topbar-search-input" id="cases-status-filter" style="width: 130px; height: 32px; padding: 2px 8px; font-size: 0.78rem;">
+                  <option value="ALL">All Statuses</option>
+                  <option value="OPEN">Open</option>
+                  <option value="INVESTIGATING">Investigating</option>
+                  <option value="CONTAINED">Contained</option>
+                  <option value="CLOSED">Closed</option>
+                </select>
+                <input type="text" class="topbar-search-input" id="cases-filter-search" placeholder="Filter cases..." style="width: 200px; height: 32px;">
+                <button type="button" class="btn-primary" id="btn-open-create-case-modal" style="font-size: 0.8rem; padding: 6px 14px; background: var(--brand-cyan); color: #020617; font-weight: 700; border-radius: var(--radius-sm);">
+                  + New Incident
+                </button>
               </div>
             </div>
 
@@ -542,6 +615,8 @@
                     <th>Subject</th>
                     <th>Sender</th>
                     <th>Primary Threat</th>
+                    <th>Status</th>
+                    <th>Assigned To</th>
                     <th>Threat Score</th>
                     <th>Action</th>
                   </tr>
@@ -558,7 +633,7 @@
           <!-- TAB PANE 3: CASE DETAILS WORKSPACE -->
           <div id="ai-pane-case-detail" class="module-tab-pane">
             <div id="view-case-detail">
-          
+
           <!-- Case Header Banner -->
           <div class="case-header-card" id="case-header-card">
             <div>
@@ -567,6 +642,27 @@
               <div class="case-meta-row">
                 <span>Sender: <strong id="case-detail-sender" style="color: var(--text-primary);">-</strong></span>
                 <span>Date: <strong id="case-detail-date" style="color: var(--text-primary);">-</strong></span>
+              </div>
+              <!-- Triage Status & Assignment Bar -->
+              <div class="case-meta-row" style="margin-top: 10px; gap: 14px; align-items: center; background: rgba(15,23,42,0.4); padding: 8px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Status:</span>
+                  <select id="case-detail-status-select" class="topbar-search-input" style="padding: 2px 8px; font-size: 0.75rem; width: 130px; height: 28px;">
+                    <option value="OPEN">OPEN</option>
+                    <option value="TRIAGED">TRIAGED</option>
+                    <option value="INVESTIGATING">INVESTIGATING</option>
+                    <option value="CONTAINED">CONTAINED</option>
+                    <option value="CLOSED">CLOSED</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Assigned To:</span>
+                  <input type="text" id="case-detail-assignee-input" class="topbar-search-input" placeholder="soc_analyst@threatlens.io" style="padding: 2px 8px; font-size: 0.75rem; width: 180px; height: 28px;">
+                </div>
+                <button type="button" id="btn-save-case-status" class="btn-table-action" style="font-size: 0.75rem; padding: 4px 12px; background: rgba(56,189,248,0.2); border-color: var(--brand-cyan); color: #fff; font-weight: 600;">
+                  Save Updates
+                </button>
+                <span id="case-status-save-feedback" style="font-size: 0.75rem; color: #4ade80; display: none;">✓ Saved!</span>
               </div>
             </div>
 
@@ -586,6 +682,7 @@
                 <div class="case-score-num" id="case-detail-score" style="color: #f87171;">100 / 100</div>
               </div>
               <span class="status-badge status-malicious" id="case-detail-risk-badge" style="font-size: 0.85rem; padding: 6px 14px;">CRITICAL RISK</span>
+              <span class="badge" id="case-detail-sample-badge" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; display: none;"></span>
             </div>
           </div>
 
@@ -659,6 +756,13 @@
               </svg>
               Enterprise Exposure
             </button>
+
+            <button type="button" class="case-tab-btn" data-tab="narrative" id="tab-btn-case-narrative">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+              Kill Chain Narrative
+            </button>
           </nav>
 
           <!-- TAB 1: OVERVIEW -->
@@ -696,7 +800,7 @@
           <!-- TAB 2: FORENSICS -->
           <div id="tab-pane-forensics" class="tab-pane">
             <div class="forensics-2col">
-              
+
               <!-- Sender Alignment & Auth -->
               <div class="glass-panel">
                 <div class="panel-header">
@@ -812,17 +916,45 @@
 
           <!-- TAB 6: EVIDENCE -->
           <div id="tab-pane-evidence" class="tab-pane">
-            <div class="evidence-card">
-              <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.75rem;">Cryptographic Proof of Evidence</h3>
-              <div style="font-size: 0.82rem; color: var(--text-muted);">
-                Deterministic cryptographic hash of the original raw RFC 822 email payload establishing non-repudiation.
+            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+              <div class="evidence-card">
+                <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.75rem;">Cryptographic Proof of Evidence</h3>
+                <div style="font-size: 0.82rem; color: var(--text-muted);">
+                  Deterministic cryptographic hash of the original raw RFC 822 email payload establishing non-repudiation.
+                </div>
+                <div class="hash-signature-block" id="case-evidence-hash">
+                  SHA-256: 664f61f41747557613589fa5a558661d427129a32292b920663456a6956f
+                </div>
+                <div style="display: flex; gap: 16px; margin-top: 1rem; font-size: 0.85rem;">
+                  <div>Ledger Status: <span class="status-badge status-clean">VERIFIED</span></div>
+                  <div>Algorithm: <strong>SHA-256 (RFC 6234)</strong></div>
+                </div>
               </div>
-              <div class="hash-signature-block" id="case-evidence-hash">
-                SHA-256: 664f61f41747557613589fa5a558661d427129a32292b920663456a6956f
+
+              <!-- Supporting Evidence References -->
+              <div class="glass-panel" style="padding: 1.25rem;">
+                <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.75rem; color: #f8fafc;">Supporting Evidence Records</h4>
+                <div id="case-evidence-records-container">
+                  <div style="font-size: 0.82rem; color: var(--text-muted);">No external evidence records attached.</div>
+                </div>
               </div>
-              <div style="display: flex; gap: 16px; margin-top: 1rem; font-size: 0.85rem;">
-                <div>Ledger Status: <span class="status-badge status-clean">VERIFIED</span></div>
-                <div>Algorithm: <strong>SHA-256 (RFC 6234)</strong></div>
+
+              <!-- Persisted Analyst Notes -->
+              <div class="glass-panel" style="padding: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                  <h4 style="font-size: 0.95rem; font-weight: 700; color: #f8fafc;">Analyst Notes &amp; Observations</h4>
+                  <span id="case-notes-count-badge" class="status-badge" style="background: rgba(255,255,255,0.06); font-size: 0.75rem;">0 Notes</span>
+                </div>
+                <div id="case-notes-list" style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 1rem;">
+                  <div style="font-size: 0.82rem; color: var(--text-muted);">No analyst notes recorded yet.</div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+                  <div style="display: flex; gap: 8px;">
+                    <input type="text" id="case-new-note-author" class="topbar-search-input" placeholder="Author (e.g. soc_analyst)" style="width: 180px; height: 32px; font-size: 0.8rem;">
+                    <input type="text" id="case-new-note-text" class="topbar-search-input" placeholder="Type analyst observation or triage note..." style="flex: 1; height: 32px; font-size: 0.8rem;">
+                    <button type="button" id="btn-case-add-note" class="btn-primary" style="padding: 4px 14px; font-size: 0.8rem; background: var(--brand-cyan); color: #020617; font-weight: 700; border-radius: 4px;">Add Note</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -876,30 +1008,107 @@
             </div>
           </div>
 
+          <!-- TAB 9: CORRELATED INCIDENT NARRATIVE & KILL CHAIN -->
+          <div id="tab-pane-narrative" class="tab-pane">
+            <div class="glass-panel" style="padding: 1.25rem;">
+              <div class="panel-header" style="margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+                <div>
+                  <h3 class="panel-title" style="display: flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand-amber)" stroke-width="2">
+                      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                    </svg>
+                    Correlated Incident Narrative &amp; MITRE Kill Chain
+                  </h3>
+                  <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 3px;">
+                    Multi-hop incident reconstruction from explicit correlation rules and verified identifiers
+                  </div>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <span class="status-badge status-clean" id="case-narrative-noise-badge" style="font-size: 0.8rem; font-weight: 700;">90% Noise Reduction</span>
+                </div>
+              </div>
+
+              <!-- Analytical Interpretation Disclaimer Banner -->
+              <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 6px; padding: 10px 14px; margin-bottom: 1rem; font-size: 0.82rem; color: #fbbf24; display: flex; align-items: center; gap: 10px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink: 0;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="8" x2="12" y2="12"></line>
+                  <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                </svg>
+                <div>
+                  <strong>Analytical Interpretation:</strong>
+                  <span id="case-narrative-disclaimer-text">Consolidated graph kill-chain narrative generated from correlated security telemetry; replaces disparate relational alerts with unified graph context (Analytical Interpretation).</span>
+                </div>
+              </div>
+
+              <!-- Executive Narrative Summary -->
+              <div class="nl-summary-box" style="margin-bottom: 1.25rem;">
+                <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--brand-cyan); margin-bottom: 4px;">Executive Narrative Synthesis</div>
+                <div id="case-narrative-summary-text" style="font-size: 0.92rem; color: #f8fafc; line-height: 1.6;">Reconstructing attack sequence...</div>
+              </div>
+
+              <!-- Involved Entities Cards -->
+              <div style="display: flex; gap: 14px; margin-bottom: 1.25rem; flex-wrap: wrap;">
+                <div class="glass-panel" style="flex: 1; min-width: 200px; padding: 12px;">
+                  <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Involved Identity / User</div>
+                  <div id="case-narrative-user" style="font-family: var(--font-mono); font-size: 0.85rem; color: #7dd3fc; margin-top: 4px;">-</div>
+                </div>
+                <div class="glass-panel" style="flex: 1; min-width: 200px; padding: 12px;">
+                  <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Compromised Endpoint Device</div>
+                  <div id="case-narrative-device" style="font-family: var(--font-mono); font-size: 0.85rem; color: #f87171; margin-top: 4px;">-</div>
+                </div>
+                <div class="glass-panel" style="flex: 1; min-width: 200px; padding: 12px;">
+                  <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Intermediate Choke Point Server</div>
+                  <div id="case-narrative-choke" style="font-family: var(--font-mono); font-size: 0.85rem; color: #fbbf24; margin-top: 4px;">-</div>
+                </div>
+              </div>
+
+              <!-- Kill Chain Step List -->
+              <div style="font-size: 0.8rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.75rem;">
+                Supported Incident Progression (MITRE ATT&amp;CK Matrix)
+              </div>
+              <div id="case-kill-chain-steps-container" style="display: flex; flex-direction: column; gap: 10px;">
+                <!-- Populated dynamically via JS -->
+              </div>
+            </div>
+          </div>
+
             </div>
           </div>
 
           <!-- TAB PANE 4: TIMELINE -->
           <div id="ai-pane-timeline" class="module-tab-pane">
             <div class="glass-panel">
-              <div class="panel-header">
+              <div class="panel-header" style="flex-wrap: wrap; gap: 12px;">
                 <div>
                   <h3 class="panel-title">Chronological Investigation Timeline</h3>
                   <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
-                    Sequence of observed events, transmission relay hops, and analyst interventions
+                    Genuine timestamped events with distinct origin time, ingestion time, and evidence references
                   </div>
                 </div>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                  <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 700;">SELECT CASE:</span>
+                  <select id="timeline-case-select" class="topbar-search-input" style="width: 150px; height: 32px; font-size: 0.78rem;">
+                    <option value="MT-101">Case #MT-101</option>
+                    <option value="MT-102">Case #MT-102</option>
+                    <option value="MT-103">Case #MT-103</option>
+                    <option value="MT-201">Case #MT-201</option>
+                    <option value="MT-301">Case #MT-301</option>
+                  </select>
+                  <button type="button" class="btn-table-action" id="btn-refresh-timeline" style="font-size: 0.78rem; padding: 4px 10px;">↻ Refresh</button>
+                </div>
               </div>
+
+              <!-- Timestamp Integrity Banner -->
+              <div style="padding: 10px 1.25rem; background: rgba(56, 189, 248, 0.05); border-bottom: 1px solid var(--border-subtle); display: flex; gap: 20px; font-size: 0.78rem; color: var(--text-secondary); flex-wrap: wrap;">
+                <div><strong style="color: #38bdf8;">Original Event Time:</strong> When the telemetry or network frame occurred at the origin.</div>
+                <div><strong style="color: #a78bfa;">Platform Ingested At:</strong> When the event reached ThreatLens ingestion pipeline.</div>
+                <div><strong style="color: #10b981;">Integrity:</strong> Fabricated or undated events strictly excluded.</div>
+              </div>
+
               <div style="padding: 1.25rem;">
                 <div class="timeline-list" id="ai-timeline-list">
-                  <div class="timeline-entry">
-                    <div class="timeline-dot critical"></div>
-                    <div class="timeline-time-col">Active Case</div>
-                    <div class="timeline-content-col">
-                      <div class="timeline-event-title">Select an Incident to View Full Chronology</div>
-                      <div class="timeline-event-desc">Timeline tracks transmission timestamp, gateway reception, detector evaluation, and containment steps.</div>
-                    </div>
-                  </div>
+                  <!-- Populated dynamically via JS -->
                 </div>
               </div>
             </div>
@@ -911,7 +1120,7 @@
              MODULE 4: DETECTION & THREAT INTELLIGENCE
              ======================================================= -->
         <div id="view-detection-intel" class="view-pane">
-          
+
           <div class="module-header-banner">
             <div class="module-header-row">
               <div class="module-title-box">
@@ -989,7 +1198,7 @@
               </div>
 
               <div class="analysis-layout">
-                
+
                 <!-- Left: Ingestion & Upload Box -->
                 <div class="glass-panel">
                   <div class="panel-header">
@@ -1293,7 +1502,7 @@
              MODULE 6: EVIDENCE & REPORTS
              ======================================================= -->
         <div id="view-evidence-reports" class="view-pane">
-          
+
           <div class="module-header-banner">
             <div class="module-header-row">
               <div class="module-title-box">
@@ -1402,7 +1611,7 @@
 
           <!-- TAB PANE 3: EXPORTS & DOSSIER EXPLORER -->
           <div id="er-pane-exports" class="module-tab-pane">
-            
+
             <!-- Dossier Explorer Header & Controls -->
             <div class="glass-panel" style="padding: 1.25rem 1.5rem; margin-bottom: 1.25rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
@@ -1441,7 +1650,7 @@
 
             <!-- Dossier Details Grid -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 1.25rem; margin-bottom: 1.25rem;">
-              
+
               <!-- Case Identity & Classification Card -->
               <div class="glass-panel" style="padding: 1.25rem;">
                 <div class="panel-header" style="margin-bottom: 12px;">
@@ -1507,7 +1716,7 @@
 
             <!-- Enterprise Exposure & Cryptographic Chain of Custody -->
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 1.25rem;">
-              
+
               <!-- Enterprise Exposure Summary -->
               <div class="glass-panel" style="padding: 1.25rem;">
                 <div class="panel-header" style="margin-bottom: 12px;">
@@ -1553,7 +1762,7 @@
              ======================================================= -->
         <div id="view-access-governance" class="view-pane">
           <div id="view-governance">
-          
+
           <!-- Governance Header & Compliance Context Banner -->
           <div class="glass-panel" style="margin-bottom: 1.25rem;">
             <div class="panel-header" style="flex-wrap: wrap; gap: 12px;">
@@ -1728,7 +1937,7 @@
 
           <!-- TAB 4: REMEDIATION & AUDIT TRAIL -->
           <div id="gov-pane-remediation" class="gov-tab-pane" style="display: none;">
-            
+
             <!-- Remediations Section -->
             <div class="glass-panel" style="padding: 16px 20px; margin-bottom: 1.25rem;">
               <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
@@ -1818,7 +2027,7 @@
              ======================================================= -->
         <div id="view-knowledge-graph" class="view-pane active">
           <div id="view-graphops">
-          
+
           <!-- Module 3 Header Banner -->
           <div class="module-header-banner">
             <div class="module-header-row">
@@ -1961,7 +2170,7 @@
 
           <!-- Controls & Filter Bar -->
           <div class="glass-panel" style="margin-bottom: 1.25rem; padding: 14px 18px;">
-            
+
             <!-- Quick Entity Filter Chips & Live Search -->
             <div style="margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
               <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -1986,7 +2195,7 @@
             </div>
 
             <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;">
-              
+
               <!-- Starting / Entry Node Selector -->
               <div style="flex: 1; min-width: 240px;">
                 <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 5px;">
@@ -2126,7 +2335,7 @@
 
           <!-- Standardized 65/35 Graph Workspace Split Layout (Phase 4) -->
           <div class="graphops-workspace-split">
-            
+
             <!-- Cytoscape Graph Canvas Viewport (~65%) -->
             <div class="graphops-split-canvas glass-panel" style="position: relative;">
               <div class="panel-header" style="padding: 10px 16px; border-bottom: 1px solid var(--border-subtle);">
@@ -2152,7 +2361,7 @@
 
               <!-- The Cytoscape DOM element -->
               <div id="cy-graphops-canvas" style="height: 620px; width: 100%; border-radius: 0 0 var(--radius-md) var(--radius-md); position: relative;">
-                
+
                 <!-- Canvas Loading Overlay -->
                 <div id="graphops-canvas-loading" class="canvas-loading-overlay" style="display: none;">
                   <div class="loading-spinner"></div>
@@ -2279,7 +2488,7 @@
 
           <!-- Bottom Panel: Choke Points / Attack Paths / What-If Comparison -->
           <div style="margin-top: 1.25rem;">
-            
+
             <!-- Detailed Attack Paths Breakdown Panel (Shown in Paths Mode) -->
             <div class="glass-panel" id="panel-attack-paths-breakdown" style="display: none; margin-bottom: 1.25rem;">
               <div class="panel-header" style="flex-wrap: wrap; gap: 8px;">
@@ -2378,7 +2587,15 @@
                   Safety Guarantee: Simulation executed strictly against an in-memory graph projection. No live directory accounts were altered and no firewall rules were modified.
                 </div>
 
-                <div style="display: flex; justify-content: flex-end; margin-top: 14px;">
+                <div style="display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap;">
+                  <button type="button" class="btn-primary" id="btn-save-simulation-to-case" style="font-size: 0.78rem; padding: 6px 14px; cursor: pointer; background: rgba(56, 189, 248, 0.2); border: 1px solid var(--brand-cyan); color: #38bdf8;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;">
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                      <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                      <polyline points="7 3 7 8 15 8"></polyline>
+                    </svg>
+                    Save Simulation to Investigation Case
+                  </button>
                   <button type="button" class="btn-primary" id="btn-export-containment-proof" style="font-size: 0.78rem; padding: 6px 14px; cursor: pointer;">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align: -2px; margin-right: 4px;">
                       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
@@ -2386,6 +2603,7 @@
                     </svg>
                     Export Signed Containment Dossier (SHA-256) &rarr;
                   </button>
+                  <span id="save-simulation-feedback" style="display: none; font-size: 0.78rem; color: #10b981; font-weight: 600;">Saved!</span>
                 </div>
               </div>
             </div>
@@ -2762,7 +2980,7 @@
           </div>
 
           <!-- Metric Cards Row -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
             <div class="metric-card">
               <div>
                 <div class="metric-label">Enrolled Computers</div>
@@ -2775,11 +2993,21 @@
 
             <div class="metric-card">
               <div>
-                <div class="metric-label">Actively Sending</div>
+                <div class="metric-label">Actively Sending (Online)</div>
                 <div class="metric-value" id="metric-collectors-active" style="color: #10b981;">0</div>
               </div>
               <div class="metric-icon-box" style="background: rgba(16, 185, 129, 0.1); color: #10b981;">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Offline / Enrolled</div>
+                <div class="metric-value" id="metric-collectors-offline" style="color: #94a3b8;">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(148, 163, 184, 0.1); color: #94a3b8;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="2" y1="20" x2="22" y2="20"></line></svg>
               </div>
             </div>
 
@@ -2790,6 +3018,16 @@
               </div>
               <div class="metric-icon-box" style="background: rgba(56, 189, 248, 0.1); color: var(--brand-cyan);">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <div>
+                <div class="metric-label">Auth Failures</div>
+                <div class="metric-value" id="metric-collectors-auth-failures" style="color: #fbbf24;">0</div>
+              </div>
+              <div class="metric-icon-box" style="background: rgba(245, 158, 11, 0.1); color: #fbbf24;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
               </div>
             </div>
 
@@ -2846,13 +3084,14 @@
                     <th style="padding: 10px 12px;">COLLECTOR ID</th>
                     <th style="padding: 10px 12px;">LAST SEEN</th>
                     <th style="padding: 10px 12px; text-align: right;">EVENTS</th>
+                    <th style="padding: 10px 12px;">PENDING SPOOL</th>
                     <th style="padding: 10px 12px;">RECENT ERRORS</th>
                     <th style="padding: 10px 12px; text-align: right;">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody id="collectors-table-body">
                   <tr>
-                    <td colspan="8" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                    <td colspan="9" style="padding: 24px; text-align: center; color: var(--text-muted);">
                       Loading enrolled collectors...
                     </td>
                   </tr>
@@ -2960,6 +3199,90 @@
     </div>
   </div>
 
+  <!-- Modal: Computer Details & Telemetry Activity Inspector -->
+  <div id="modal-collector-details" class="modal-backdrop" style="display: none;">
+    <div class="modal-card" style="max-width: 680px; max-height: 90vh; display: flex; flex-direction: column;">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-subtle);">
+        <div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--brand-cyan); text-transform: uppercase;">Remote Windows Telemetry Node</div>
+          <h3 id="det-modal-hostname" style="font-size: 1.2rem; color: #f8fafc; margin: 2px 0 0 0;">-</h3>
+        </div>
+        <button type="button" id="btn-close-collector-details" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1;">&times;</button>
+      </div>
+
+      <div style="padding: 20px; overflow-y: auto; flex: 1;">
+        <!-- Status & Node Header -->
+        <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+          <span id="det-modal-status-badge" class="status-badge">ONLINE</span>
+          <span id="det-modal-node-id" style="font-family: var(--font-mono); font-size: 0.8rem; color: var(--brand-cyan); background: rgba(56, 189, 248, 0.1); padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(56, 189, 248, 0.2);">-</span>
+          <span id="det-modal-collector-id" style="font-family: var(--font-mono); font-size: 0.8rem; color: #94a3b8; margin-left: auto;">-</span>
+        </div>
+
+        <!-- System & Enrollment Details Grid -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; font-size: 0.8rem;">
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+            <div style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase;">Operating System</div>
+            <div id="det-modal-os" style="color: #f8fafc; font-weight: 600; margin-top: 3px;">-</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+            <div style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase;">IP Address</div>
+            <div id="det-modal-ip" style="font-family: var(--font-mono); color: #f8fafc; font-weight: 600; margin-top: 3px;">-</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+            <div style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase;">Enrolled At / By</div>
+            <div id="det-modal-enrolled" style="color: #cbd5e1; margin-top: 3px;">-</div>
+          </div>
+          <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 10px 14px;">
+            <div style="color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase;">Last Communication</div>
+            <div id="det-modal-last-seen" style="color: #10b981; font-weight: 600; margin-top: 3px;">-</div>
+          </div>
+        </div>
+
+        <!-- Event Counters Grid -->
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px;">
+          <div style="background: rgba(56, 189, 248, 0.05); border: 1px solid rgba(56, 189, 248, 0.2); border-radius: var(--radius-sm); padding: 10px 12px; text-align: center;">
+            <div style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Total Events</div>
+            <div id="det-modal-events" style="font-size: 1.2rem; font-weight: 800; color: #38bdf8; font-family: var(--font-mono); margin-top: 2px;">0</div>
+          </div>
+          <div style="background: rgba(239, 68, 68, 0.05); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: var(--radius-sm); padding: 10px 12px; text-align: center;">
+            <div style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Errors</div>
+            <div id="det-modal-errors" style="font-size: 1.2rem; font-weight: 800; color: #f87171; font-family: var(--font-mono); margin-top: 2px;">0</div>
+          </div>
+          <div style="background: rgba(245, 158, 11, 0.05); border: 1px solid rgba(245, 158, 11, 0.2); border-radius: var(--radius-sm); padding: 10px 12px; text-align: center;">
+            <div style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Spool Pending</div>
+            <div id="det-modal-pending-spool" style="font-size: 1.2rem; font-weight: 800; color: #fbbf24; font-family: var(--font-mono); margin-top: 2px;">0</div>
+          </div>
+          <div style="background: rgba(168, 85, 247, 0.05); border: 1px solid rgba(168, 85, 247, 0.2); border-radius: var(--radius-sm); padding: 10px 12px; text-align: center;">
+            <div style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Auth Failures</div>
+            <div id="det-modal-auth-failures" style="font-size: 1.2rem; font-weight: 800; color: #c084fc; font-family: var(--font-mono); margin-top: 2px;">0</div>
+          </div>
+        </div>
+
+        <!-- Recent Errors Log -->
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Recent Delivery / Error Log:</div>
+          <div id="det-modal-errors-container" style="max-height: 140px; overflow-y: auto; background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); border-radius: var(--radius-xs); padding: 10px; font-family: var(--font-mono); font-size: 0.75rem; color: #cbd5e1;">
+            No errors recorded.
+          </div>
+        </div>
+      </div>
+
+      <div style="padding: 12px 20px; border-top: 1px solid var(--border-subtle); display: flex; justify-content: space-between; align-items: center;">
+        <button type="button" class="btn-table-action" id="btn-det-modal-download-cfg" style="color: var(--brand-cyan); border-color: rgba(56, 189, 248, 0.4); font-size: 0.8rem;">
+          Download config.json
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn-table-action" id="btn-det-modal-revoke" style="color: #f87171; border-color: rgba(239, 68, 68, 0.4); font-size: 0.8rem;">
+            Revoke Credentials
+          </button>
+          <button type="button" class="btn-primary" id="btn-close-collector-details-footer" style="padding: 6px 18px; font-size: 0.82rem;">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Modal: Enrol New Collector -->
   <div id="modal-enrol-collector" class="modal-backdrop" style="display: none;">
     <div class="modal-card" style="max-width: 580px;">
@@ -3049,6 +3372,80 @@
           <button type="button" id="btn-done-enrol" class="btn-primary" style="padding: 6px 20px;">Done</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: Create New Investigation Incident Case -->
+  <div id="modal-create-case" class="modal-backdrop" style="display: none;">
+    <div class="modal-card" style="max-width: 620px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-subtle);">
+        <h3 style="font-size: 1.15rem; color: #f8fafc; margin: 0;">+ Create Security Incident Case</h3>
+        <button type="button" id="btn-close-create-case-modal" style="background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; line-height: 1;">&times;</button>
+      </div>
+      <form id="form-create-case" style="padding: 20px; display: flex; flex-direction: column; gap: 12px;">
+        <div>
+          <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">INCIDENT SUBJECT / TITLE *</label>
+          <input type="text" id="new-case-subject" class="topbar-search-input" required placeholder="e.g. Critical: Credential Phishing Campaign Ingress" style="width: 100%;">
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">SENDER / ATTACKER ORIGIN *</label>
+            <input type="text" id="new-case-sender" class="topbar-search-input" required placeholder="e.g. evil@attacker-domain.xyz" style="width: 100%;">
+          </div>
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">TARGET RECIPIENT</label>
+            <input type="text" id="new-case-recipient" class="topbar-search-input" placeholder="e.g. victim@corporation.com" style="width: 100%;">
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">PRIMARY THREAT</label>
+            <select id="new-case-threat" class="topbar-search-input" style="width: 100%;">
+              <option value="PHISHING">PHISHING</option>
+              <option value="BEC">BEC</option>
+              <option value="SPOOFING / IMPERSONATION">SPOOFING / IMPERSONATION</option>
+              <option value="MALWARE_DELIVERY">MALWARE_DELIVERY</option>
+              <option value="LATERAL_MOVEMENT">LATERAL_MOVEMENT</option>
+              <option value="CREDENTIAL_HARVESTING">CREDENTIAL_HARVESTING</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">RISK LEVEL</label>
+            <select id="new-case-risk" class="topbar-search-input" style="width: 100%;">
+              <option value="CRITICAL">CRITICAL</option>
+              <option value="HIGH">HIGH</option>
+              <option value="MEDIUM" selected>MEDIUM</option>
+              <option value="LOW">LOW</option>
+            </select>
+          </div>
+          <div style="width: 100px;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">SCORE (0-100)</label>
+            <input type="number" id="new-case-score" min="0" max="100" value="85" class="topbar-search-input" style="width: 100%;">
+          </div>
+        </div>
+        <div style="display: flex; gap: 12px;">
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">ASSIGNED ANALYST</label>
+            <input type="text" id="new-case-assignee" class="topbar-search-input" placeholder="soc_analyst@threatlens.io" style="width: 100%;">
+          </div>
+          <div style="flex: 1;">
+            <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">INITIAL STATUS</label>
+            <select id="new-case-status" class="topbar-search-input" style="width: 100%;">
+              <option value="OPEN" selected>OPEN</option>
+              <option value="INVESTIGATING">INVESTIGATING</option>
+              <option value="CONTAINED">CONTAINED</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label style="display: block; font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">INITIAL TRIAGE NOTE</label>
+          <textarea id="new-case-note" class="topbar-search-input" rows="2" placeholder="Summary of initial observation or escalation rationale..." style="width: 100%; height: auto;"></textarea>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 10px;">
+          <button type="button" id="btn-cancel-create-case" class="btn-table-action">Cancel</button>
+          <button type="submit" class="btn-primary" style="background: var(--brand-cyan); color: #020617; font-weight: 700;">Create Case</button>
+        </div>
+      </form>
     </div>
   </div>
 

@@ -16,6 +16,7 @@ from backend.graphops.schema import (
     EvidenceClass,
     CriticalityTier,
     TraversalDirection,
+    InterventionAction,
     canonicalize_node_id,
     get_node_label_from_id,
 )
@@ -310,11 +311,59 @@ class BlastRadiusService:
         # Resolve initial compromise root entity
         start_node = self.resolve_start_node(request.start_node_id)
 
-        # What-If containment check on root entity
-        disabled_nodes = {nid.lower() for nid in (disabled_node_ids or set())}
-        disabled_edges = {(src.lower(), tgt.lower(), rt) for src, tgt, rt in (disabled_edge_keys or set())}
+        # What-If containment check on root entity (expanded for prefix-independence)
+        disabled_nodes = set()
+        for nid in (disabled_node_ids or set()):
+            clean = nid.lower().strip()
+            disabled_nodes.add(clean)
+            if ":" in clean:
+                disabled_nodes.add(clean.split(":", 1)[1])
 
-        if disabled_nodes and start_node.id.lower() in disabled_nodes:
+        def _is_node_disabled(n_id: str) -> bool:
+            if not disabled_nodes or not n_id:
+                return False
+            clean = n_id.lower().strip()
+            if clean in disabled_nodes:
+                return True
+            if ":" in clean and clean.split(":", 1)[1] in disabled_nodes:
+                return True
+            return False
+
+        disabled_edges = set()
+        for src, tgt, rt in (disabled_edge_keys or set()):
+            src_l = src.lower().strip()
+            tgt_l = tgt.lower().strip()
+            disabled_edges.add((src_l, tgt_l, rt))
+            disabled_edges.add((src_l, tgt_l, ""))
+            src_unp = src_l.split(":", 1)[1] if ":" in src_l else src_l
+            tgt_unp = tgt_l.split(":", 1)[1] if ":" in tgt_l else tgt_l
+            disabled_edges.add((src_unp, tgt_unp, rt))
+            disabled_edges.add((src_unp, tgt_unp, ""))
+            disabled_edges.add((src_l, tgt_unp, rt))
+            disabled_edges.add((src_l, tgt_unp, ""))
+            disabled_edges.add((src_unp, tgt_l, rt))
+            disabled_edges.add((src_unp, tgt_l, ""))
+
+        def _is_edge_disabled(s_id: str, t_id: str, r_type: str) -> bool:
+            if not disabled_edges or not s_id or not t_id:
+                return False
+            s_l = s_id.lower().strip()
+            t_l = t_id.lower().strip()
+            s_unp = s_l.split(":", 1)[1] if ":" in s_l else s_l
+            t_unp = t_l.split(":", 1)[1] if ":" in t_l else t_l
+            candidates = [
+                (s_l, t_l, r_type),
+                (s_l, t_l, ""),
+                (s_unp, t_unp, r_type),
+                (s_unp, t_unp, ""),
+                (s_l, t_unp, r_type),
+                (s_l, t_unp, ""),
+                (s_unp, t_l, r_type),
+                (s_unp, t_l, ""),
+            ]
+            return any(c in disabled_edges for c in candidates)
+
+        if disabled_nodes and _is_node_disabled(start_node.id):
             calc_time_ms = round((time.perf_counter() - start_time) * 1000.0, 2)
             return BlastRadiusResult(
                 start_node=start_node,
@@ -390,14 +439,11 @@ class BlastRadiusService:
                 )
 
                 # What-If containment checks: disabled nodes and edges
-                if disabled_nodes and (neighbor_id.lower() in disabled_nodes or frontier_id.lower() in disabled_nodes):
+                if _is_node_disabled(neighbor_id) or _is_node_disabled(frontier_id):
                     continue
 
-                if disabled_edges:
-                    edge_tuple = (rel_source_id.lower(), rel_target_id.lower(), rel_type_str)
-                    edge_tuple_wildcard = (rel_source_id.lower(), rel_target_id.lower(), "")
-                    if edge_tuple in disabled_edges or edge_tuple_wildcard in disabled_edges:
-                        continue
+                if _is_edge_disabled(rel_source_id, rel_target_id, rel_type_str):
+                    continue
 
                 # Validate relationship type enum
                 try:
@@ -596,6 +642,9 @@ class BlastRadiusService:
             if interv.source_id and interv.target_id:
                 rt = interv.relationship_type.value if interv.relationship_type else ""
                 disabled_edge_keys.add((interv.source_id.strip(), interv.target_id.strip(), rt))
+                # Network connection blocking suppresses communication in both directions
+                if interv.action == InterventionAction.BLOCK_CONNECTION:
+                    disabled_edge_keys.add((interv.target_id.strip(), interv.source_id.strip(), rt))
 
         # Simulated
         sim_res = self.calculate_blast_radius(

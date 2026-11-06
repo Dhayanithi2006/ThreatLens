@@ -5,29 +5,38 @@ Used for offline demonstrations, development environments, and deterministic int
 """
 
 from typing import Dict, List, Any, Optional, Set
-from backend.graphops.schema import NodeLabel
+from backend.graphops.schema import NodeLabel, canonicalize_node_id
 from backend.data.graphops_fixtures import load_sample_enterprise_fixture
 
 
 class InMemoryGraphOpsClient:
     """Mock client simulating Neo4j with path search, Crown Jewels, and USES queries."""
 
-    def __init__(self, nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]):
+    def __init__(self, nodes: Optional[List[Dict[str, Any]]] = None, edges: Optional[List[Dict[str, Any]]] = None):
+        nodes = nodes or []
         self.nodes = {n["id"].lower(): n for n in nodes}
-        self.edges = edges
+        self.edges = edges or []
         self.security_events: Dict[str, Dict[str, Any]] = {}
         self.aliases: Dict[str, str] = {}
         for n in nodes:
             nid = n["id"].lower()
             props = n.get("properties", {})
+            lbls = [str(l).lower() for l in n.get("labels", [])]
+            is_user = "user" in lbls or nid.startswith("user:")
             for key in ["email", "hostname", "user_id", "device_id", "server_id", "db_id", "app_id", "asset_id"]:
                 val = props.get(key)
                 if val:
-                    self.aliases[str(val).lower()] = nid
+                    val_str = str(val).lower()
+                    if is_user or val_str not in self.aliases:
+                        self.aliases[val_str] = nid
                     if ":" in str(val):
-                        self.aliases[str(val).split(":", 1)[1].lower()] = nid
+                        suffix = str(val).split(":", 1)[1].lower()
+                        if is_user or suffix not in self.aliases:
+                            self.aliases[suffix] = nid
             if ":" in nid:
-                self.aliases[nid.split(":", 1)[1].lower()] = nid
+                suffix = nid.split(":", 1)[1].lower()
+                if is_user or suffix not in self.aliases:
+                    self.aliases[suffix] = nid
 
     def init_schema_constraints(self, database: Optional[str] = None) -> Dict[str, Any]:
         """In-memory mock implementation of schema constraints initialization."""
@@ -37,6 +46,15 @@ class InMemoryGraphOpsClient:
             "errors": [],
             "total": len(CYPHER_SCHEMA_STATEMENTS),
             "status": "CONSTRAINTS_APPLIED",
+        }
+
+    def verify_connectivity(self) -> Dict[str, Any]:
+        """In-memory mock connectivity check for tests and disconnected development."""
+        return {
+            "status": "connected",
+            "server_agent": "ThreatLens MockGraphEngine/1.0",
+            "protocol_version": "mock",
+            "mock_mode": True,
         }
 
     def execute_write(self, query: str, params: Optional[Dict[str, Any]] = None, database: Optional[str] = None) -> Dict[str, Any]:
@@ -87,7 +105,7 @@ class InMemoryGraphOpsClient:
         q = query.strip()
 
         # 1. Node Resolution Query
-        if ("WHERE n.id =" in q or "WHERE n.id = $id" in q or "toLower(n.id) = toLower($id)" in q or "OPTIONAL MATCH" in q or "coalesce(u, d, s" in q):
+        if ("WHERE n.id =" in q or "WHERE n.id = $id" in q or "toLower(n.id) = toLower($id)" in q or "coalesce(u, d, s" in q):
             target_id = str(params.get("id") or params.get("clean_id") or params.get("canonical_id") or "").lower()
             id_without_prefix = str(params.get("id_without_prefix") or "").lower()
             id_lower = str(params.get("id_lower") or "").lower()
@@ -120,9 +138,11 @@ class InMemoryGraphOpsClient:
         # 3. User to Assigned Device Query: MATCH (u {id: $uid})-[:USES]->(d)
         if "-[:USES]->(d)" in q:
             uid = str(params.get("uid", "")).lower()
+            uid_alias = self.aliases.get(uid, uid).lower()
             results = []
             for e in self.edges:
-                if e["source_id"].lower() == uid and e["relationship_type"] == "USES":
+                src = e["source_id"].lower()
+                if (src == uid or src == uid_alias) and e["relationship_type"] in ("USES", "OWNS", "ASSIGNED_TO"):
                     target_node = self.nodes.get(e["target_id"].lower())
                     if target_node:
                         results.append({
@@ -258,7 +278,7 @@ class InMemoryGraphOpsClient:
                 counts[lbl] = counts.get(lbl, 0) + 1
             return [{"label": k, "count": v} for k, v in counts.items()]
 
-        if "RETURN type(r) AS rel_type" in q:
+        if "RETURN type(r) AS rel_type" in q and "count(" in q:
             counts = {}
             for e in self.edges:
                 rt = e.get("relationship_type", "RELATED_TO")
@@ -353,7 +373,7 @@ class InMemoryGraphOpsClient:
         # 8. SecurityEvent Marker Query (Deduplication Check)
         if "MATCH (e:SecurityEvent {id: $event_id})" in q:
             eid = params.get("event_id")
-            if eid and eid in self.security_events:
+            if eid and (eid in self.security_events or canonicalize_node_id(NodeLabel.SECURITY_EVENT, eid) in self.security_events):
                 return [{"id": eid}]
             return []
 
@@ -361,12 +381,16 @@ class InMemoryGraphOpsClient:
         if "MERGE (e:SecurityEvent {id: $event_id})" in q:
             eid = params.get("event_id")
             if eid:
+                canonical_eid = canonicalize_node_id(NodeLabel.SECURITY_EVENT, eid)
                 self.security_events[eid] = params
-                self.nodes[eid.lower()] = {
-                    "id": eid,
+                self.security_events[canonical_eid] = params
+                node_obj = {
+                    "id": canonical_eid,
                     "labels": ["SecurityEvent"],
                     "properties": params,
                 }
+                self.nodes[canonical_eid.lower()] = node_obj
+                self.aliases[eid.lower()] = canonical_eid
             return [{"status": "MOCKED_PERSISTENCE_SUCCESS"}]
 
         if "MERGE (d:Device {id: $id})" in q:
@@ -454,6 +478,7 @@ def get_mock_graphops_client() -> InMemoryGraphOpsClient:
         "vulnerabilities": [NodeLabel.VULNERABILITY.value],
         "critical_assets": [NodeLabel.CRITICAL_ASSET.value],
         "security_events": [NodeLabel.SECURITY_EVENT.value],
+        "email_accounts": [NodeLabel.EMAIL_ACCOUNT.value],
     }
 
     prefix_map = {
@@ -465,6 +490,7 @@ def get_mock_graphops_client() -> InMemoryGraphOpsClient:
         "vulnerabilities": "vuln",
         "critical_assets": "critical",
         "security_events": "event",
+        "email_accounts": "email",
     }
 
     for category, entity_list in fixture["entities"].items():

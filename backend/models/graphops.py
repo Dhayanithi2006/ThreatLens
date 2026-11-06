@@ -608,6 +608,10 @@ class AttackPathResult(BaseModel):
     )
     calculation_time_ms: Optional[float] = Field(default=None, description="Execution time in milliseconds")
     warnings: List[str] = Field(default_factory=list, description="Explicit limits and assumptions of the path search")
+    recommended_blast_radius_url: Optional[str] = Field(
+        default=None,
+        description="Direct URL to pivot into Module 3 Blast Radius for the entry node"
+    )
 
 
 # =====================================================================
@@ -676,6 +680,10 @@ class DijkstraShortestPathResult(BaseModel):
     )
     calculation_time_ms: float = Field(default=0.0, description="Execution time in milliseconds")
     warnings: List[str] = Field(default_factory=list, description="Search bounds, assumptions, or missing weight notices")
+    recommended_blast_radius_url: Optional[str] = Field(
+        default=None,
+        description="Direct URL to pivot into Module 3 Blast Radius for this route"
+    )
 
 
 # =====================================================================
@@ -704,6 +712,10 @@ class ChokePointItem(BaseModel):
     affected_critical_assets: List[str] = Field(description="Crown Jewels protected by this single intervention")
     recommended_action: InterventionAction = Field(description="Recommended containment action")
     intervention_details: str = Field(description="Actionable SOC containment instructions")
+    recommended_blast_radius_url: Optional[str] = Field(
+        default=None,
+        description="Direct URL to pivot into Module 3 Blast Radius for this choke point"
+    )
 
 
 class ChokePointResult(BaseModel):
@@ -736,6 +748,40 @@ class ProposedIntervention(BaseModel):
     relationship_type: Optional[RelationshipType] = None
     rationale: str = Field(default="SOC proactive blast-radius containment")
 
+    @field_validator("action", mode="before")
+    @classmethod
+    def normalize_action(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            clean = v.strip().upper()
+            alias_map = {
+                "DEVICE_ISOLATION": InterventionAction.ISOLATE_NODE,
+                "SERVER_ISOLATION": InterventionAction.ISOLATE_NODE,
+                "ISOLATE_DEVICE": InterventionAction.ISOLATE_NODE,
+                "ISOLATE_SERVER": InterventionAction.ISOLATE_NODE,
+                "ACCOUNT_RESTRICTION": InterventionAction.DISABLE_ACCOUNT,
+                "RESTRICT_ACCOUNT": InterventionAction.DISABLE_ACCOUNT,
+                "DISABLE_USER": InterventionAction.DISABLE_ACCOUNT,
+                "RELATIONSHIP_REMOVAL": InterventionAction.REVOKE_PERMISSION,
+                "REMOVE_RELATIONSHIP": InterventionAction.REVOKE_PERMISSION,
+                "REVOKE_ACCESS": InterventionAction.REVOKE_PERMISSION,
+                "NETWORK_BLOCK": InterventionAction.BLOCK_CONNECTION,
+                "BLOCK_NETWORK": InterventionAction.BLOCK_CONNECTION,
+                "NETWORK_CONNECTION_BLOCKING": InterventionAction.BLOCK_CONNECTION,
+            }
+            if clean in alias_map:
+                return alias_map[clean]
+            if clean in InterventionAction._value2member_map_:
+                return InterventionAction(clean)
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_node_or_target(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("node_id") and data.get("target_id"):
+                data["node_id"] = data["target_id"]
+        return data
+
 
 class ContainmentSimulationRequest(BaseModel):
     """Request payload to simulate one or more containment actions without modifying live graph."""
@@ -745,6 +791,20 @@ class ContainmentSimulationRequest(BaseModel):
         min_length=1,
         description="List of proposed revocations or isolations to test"
     )
+    case_id: Optional[str] = Field(
+        default=None,
+        description="Optional ThreatLens investigation case ID to persist simulation findings"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_containment_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("proposed_interventions") and data.get("interventions"):
+                data["proposed_interventions"] = data["interventions"]
+            if not data.get("entry_node_id") and data.get("start_node_id"):
+                data["entry_node_id"] = data["start_node_id"]
+        return data
 
 
 class SimulatedPathStatus(BaseModel):
@@ -783,6 +843,9 @@ class ContainmentSimulationResult(BaseModel):
         default="SIMULATION ONLY: No actual permissions were revoked, no devices were disconnected, "
                 "and no live infrastructure was modified."
     )
+    case_id: Optional[str] = Field(default=None, description="Linked investigation case ID if persisted")
+    timeline_event_id: Optional[str] = Field(default=None, description="Persisted timeline event ID in case store")
+    note_id: Optional[str] = Field(default=None, description="Persisted analyst note ID in case store")
 
 
 class BlastRadiusContainmentRequest(BaseModel):
@@ -793,6 +856,20 @@ class BlastRadiusContainmentRequest(BaseModel):
     allowed_relationship_types: Optional[List[RelationshipType]] = None
     include_hypothetical: bool = Field(default=False, description="Whether to include hypothetical vectors")
     proposed_interventions: List[ProposedIntervention] = Field(min_length=1, description="Proposed containment interventions")
+    case_id: Optional[str] = Field(
+        default=None,
+        description="Optional ThreatLens investigation case ID to persist simulation findings"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_interventions_alias(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("proposed_interventions") and data.get("interventions"):
+                data["proposed_interventions"] = data["interventions"]
+            if not data.get("start_node_id") and data.get("entry_node_id"):
+                data["start_node_id"] = data["entry_node_id"]
+        return data
 
 
 class BlastRadiusContainmentResult(BaseModel):
@@ -818,6 +895,34 @@ class BlastRadiusContainmentResult(BaseModel):
         default="SIMULATION ONLY: In-memory evaluation. No live network configuration, firewall rules, "
                 "or database nodes were modified."
     )
+    case_id: Optional[str] = Field(default=None, description="Linked investigation case ID if persisted")
+    timeline_event_id: Optional[str] = Field(default=None, description="Persisted timeline event ID in case store")
+    note_id: Optional[str] = Field(default=None, description="Persisted analyst note ID in case store")
+
+
+class SaveSimulationFindingRequest(BaseModel):
+    """Request payload to manually or programmatically persist a simulation finding to an investigation case."""
+    case_id: str = Field(description="Target investigation case ID e.g. MT-101")
+    simulation_id: str = Field(description="Unique simulation identifier")
+    simulation_type: str = Field(default="WHAT_IF_CONTAINMENT", description="WHAT_IF_CONTAINMENT or BLAST_RADIUS_CONTAINMENT")
+    entry_node_id: str = Field(description="Root entity evaluated e.g. device:dev-ws-101")
+    interventions: List[ProposedIntervention] = Field(description="List of simulated interventions")
+    efficiency_pct: float = Field(description="Containment efficiency percentage")
+    verdict: str = Field(description="Executive assessment verdict")
+    residual_assets: List[str] = Field(default_factory=list, description="Residual reachable critical assets")
+    safety_disclaimer: str = Field(
+        default="SIMULATION ONLY: In-memory evaluation. No live network configuration, firewall rules, or accounts were modified."
+    )
+    author: str = Field(default="soc_analyst@threatlens.io", description="Analyst submitting finding")
+
+
+class SaveSimulationFindingResponse(BaseModel):
+    """Confirmation contract for saving simulation finding to case store."""
+    success: bool
+    case_id: str
+    timeline_event_id: str
+    note_id: str
+    message: str
 
 
 # =====================================================================
@@ -939,6 +1044,18 @@ class UnexpectedRelationship(BaseModel):
     affected_entity: Optional[str] = Field(
         default=None,
         description="Identifier of primary affected corporate entity"
+    )
+    case_id: Optional[str] = Field(
+        default=None,
+        description="Associated investigation case identifier if linked (e.g. MT-101)"
+    )
+    blast_radius_pivot_url: Optional[str] = Field(
+        default=None,
+        description="Navigation URL to analyze blast radius for the affected entity in Module 3"
+    )
+    graph_pivot_url: Optional[str] = Field(
+        default=None,
+        description="Navigation URL to view entity in Module 2 Knowledge Graph"
     )
     step_index: int = Field(ge=0)
     source_id: str

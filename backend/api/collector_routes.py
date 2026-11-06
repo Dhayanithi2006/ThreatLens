@@ -26,7 +26,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.collector.dedup import is_duplicate, mark_seen
 from backend.collector.normalizer import normalize_windows_events
@@ -35,8 +35,11 @@ from backend.collector.registry import (
     authenticate_collector,
     enrol_collector,
     get_collector,
+    get_collector_overview,
     list_collectors,
+    record_auth_failure,
     record_event_delivery,
+    record_ingestion_activity,
     revoke_collector,
 )
 from backend.core import config
@@ -96,6 +99,28 @@ class CollectorStatusResponse(BaseModel):
     status: str
     device_node_id: str
     recent_errors: List[str]
+    pending_spool_events: int = 0
+    auth_failures: int = 0
+    online_status: str = "ENROLLED"
+    is_online: bool = False
+
+
+class CollectorOverviewResponse(BaseModel):
+    """Consolidated security overview of fleet collectors, telemetry throughput, and infrastructure."""
+    total_registered_devices: int
+    online_collectors: int
+    offline_collectors: int
+    revoked_collectors: int
+    total_events_received: int
+    total_accepted_events: int
+    total_rejected_events: int
+    total_ingestion_errors: int
+    authentication_failures_count: int
+    recent_auth_failures: List[Dict[str, Any]]
+    recent_ingestion_activity: List[Dict[str, Any]]
+    connectivity: Dict[str, Any]
+    collectors: List[CollectorStatusResponse]
+    timestamp: str
 
 
 class WindowsEventRecord(BaseModel):
@@ -116,6 +141,26 @@ class WindowsEventRecord(BaseModel):
         description="EventData key-value pairs from the Windows event",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def populate_record_aliases(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("event_id_number") and data.get("event_id"):
+                data["event_id_number"] = data["event_id"]
+            elif not data.get("event_id_number") and data.get("EventID"):
+                data["event_id_number"] = data["EventID"]
+            if not data.get("source_computer") and data.get("computer"):
+                data["source_computer"] = data["computer"]
+            elif not data.get("source_computer") and data.get("Computer"):
+                data["source_computer"] = data["Computer"]
+            elif not data.get("source_computer") and data.get("hostname"):
+                data["source_computer"] = data["hostname"]
+            if not data.get("time_created") and data.get("timestamp"):
+                data["time_created"] = data["timestamp"]
+            elif not data.get("time_created") and data.get("TimeCreated"):
+                data["time_created"] = data["TimeCreated"]
+        return data
+
 
 class CollectorIngestRequest(BaseModel):
     """Batch of Windows event records submitted by a collector agent."""
@@ -128,6 +173,10 @@ class CollectorIngestRequest(BaseModel):
         default=None,
         description="Agent checkpoint offset for acknowledgement (informational)",
     )
+    pending_spool_events: Optional[int] = Field(
+        default=None,
+        description="Current number of events queued locally in endpoint offline spool",
+    )
 
 
 class CollectorIngestResponse(BaseModel):
@@ -137,6 +186,69 @@ class CollectorIngestResponse(BaseModel):
     duplicate: int
     published: int
     errors: List[str]
+    collector_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# System Connectivity Helper
+# ---------------------------------------------------------------------------
+
+def get_connectivity_status(client=None, producer=None, worker=None) -> Dict[str, Any]:
+    """Inspects live or mock connectivity for Neo4j and Kafka without throwing exceptions."""
+    if client is None:
+        try:
+            from backend.graphops.client import get_graphops_client
+            client = get_graphops_client()
+        except Exception:
+            client = None
+    if producer is None:
+        try:
+            from backend.graphops.kafka import get_graphops_producer
+            producer = get_graphops_producer()
+        except Exception:
+            producer = None
+    if worker is None:
+        try:
+            from backend.graphops.kafka_worker import get_kafka_worker
+            worker = get_kafka_worker()
+        except Exception:
+            worker = None
+
+    neo4j_info = {"status": "offline", "connected": False, "mock_mode": False, "database": "none"}
+    if client is not None:
+        try:
+            health = client.health_check()
+            is_mock = getattr(client, "mock_mode", False) or "in-memory" in str(health.get("database", "")).lower()
+            connected = bool(health.get("connected", False))
+            neo4j_info = {
+                "status": "online" if connected and not is_mock else ("mock" if is_mock else "offline"),
+                "connected": connected,
+                "mock_mode": is_mock,
+                "database": health.get("database", "neo4j"),
+                "active_nodes": health.get("active_nodes", 0),
+                "active_relationships": health.get("active_relationships", 0),
+            }
+        except Exception as exc:
+            neo4j_info["error"] = str(exc)
+
+    kafka_info = {"status": "offline", "connected": False, "mock_mode": False}
+    if producer is not None or worker is not None:
+        try:
+            p_health = producer.health_check() if producer else {}
+            w_status = worker.get_status() if worker else {}
+            is_mock = bool(p_health.get("mock_mode") or w_status.get("mock_mode"))
+            is_online = (p_health.get("status") == "healthy") or bool(w_status.get("is_running"))
+            kafka_info = {
+                "status": "online" if is_online and not is_mock else ("mock" if is_mock else "offline"),
+                "connected": is_online,
+                "mock_mode": is_mock,
+                "bootstrap_servers": p_health.get("bootstrap_servers", "localhost:9092"),
+                "consumer_running": bool(w_status.get("is_running", False)),
+            }
+        except Exception as exc:
+            kafka_info["error"] = str(exc)
+
+    return {"neo4j": neo4j_info, "kafka": kafka_info}
 
 
 # ---------------------------------------------------------------------------
@@ -144,21 +256,34 @@ class CollectorIngestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_collector_credentials(
+    request: Request,
     x_collector_id: Optional[str] = Header(None, alias="X-Collector-ID"),
     x_collector_token: Optional[str] = Header(None, alias="X-Collector-Token"),
+    x_threatlens_collector_id: Optional[str] = Header(None, alias="X-ThreatLens-Collector-ID"),
+    x_threatlens_token: Optional[str] = Header(None, alias="X-ThreatLens-Token"),
 ):
     """
     FastAPI dependency that authenticates the collector from headers.
+    Supports both X-Collector-ID/Token and X-ThreatLens-Collector-ID/Token headers.
     Raises HTTP 401 on missing/invalid credentials.
+    Records authentication failures to registry and governance audit ledger.
     Never logs the raw token.
     """
-    if not x_collector_id or not x_collector_token:
+    cid = x_collector_id or x_threatlens_collector_id
+    token = x_collector_token or x_threatlens_token
+    client_ip = request.client.host if request.client else ""
+    if not cid or not token:
+        record_auth_failure(
+            collector_id=cid or "MISSING_ID",
+            ip_address=client_ip,
+            reason="MISSING_AUTHENTICATION_HEADERS",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing collector authentication headers (X-Collector-ID, X-Collector-Token).",
             headers={"WWW-Authenticate": "CollectorToken"},
         )
-    collector = authenticate_collector(x_collector_id.strip(), x_collector_token.strip())
+    collector = authenticate_collector(cid.strip(), token.strip(), ip_address=client_ip)
     if collector is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -210,6 +335,22 @@ async def enrol_collector_endpoint(
             "Save the token now — it cannot be retrieved again."
         ),
     )
+
+
+@router.get(
+    "/overview",
+    response_model=CollectorOverviewResponse,
+    summary="Security Overview & Telemetry Dashboard",
+    description="Returns centralized security overview: registered computers, online/offline collectors, event totals, auth failures, and infrastructure connectivity.",
+)
+async def get_overview_endpoint(
+    actor: str = Depends(verify_admin_access),
+    producer: Any = Depends(get_kafka_producer_dep),
+) -> CollectorOverviewResponse:
+    """Admin-only / Dashboard: returns high-level security overview and fleet telemetry status."""
+    data = get_collector_overview()
+    data["connectivity"] = get_connectivity_status(producer=producer)
+    return CollectorOverviewResponse(**data)
 
 
 @router.get(
@@ -265,7 +406,7 @@ async def revoke_collector_endpoint(
             detail=f"Collector '{collector_id}' not found.",
         )
     logger.info("Collector %s revoked by actor %s", collector_id, actor)
-    return {"message": f"Collector '{collector_id}' has been revoked.", "collector_id": collector_id}
+    return {"message": f"Collector '{collector_id}' has been revoked.", "collector_id": collector_id, "status": "REVOKED"}
 
 
 # ---------------------------------------------------------------------------
@@ -372,20 +513,38 @@ async def ingest_collector_events(
                 envelope.event_id, collector_id, exc,
             )
 
-    # 6. Update collector telemetry
-    if errors:
-        record_event_delivery(
-            collector_id,
-            count=published_count,
-            error=errors[-1] if errors else None,
-        )
-    else:
-        record_event_delivery(collector_id, count=published_count)
+    # 6. Update collector telemetry and stream activity
+    last_err = errors[-1] if errors else None
+    record_event_delivery(
+        collector_id,
+        count=published_count,
+        error=last_err,
+        accepted=accepted_count,
+        rejected=rejected_count,
+        pending_spool_events=payload.pending_spool_events,
+    )
+
+    is_synthetic = any(
+        getattr(e, "payload", {}).get("is_synthetic", False)
+        for e in envelopes
+    )
+    record_ingestion_activity(
+        collector_id=collector_id,
+        hostname=collector.hostname,
+        accepted=accepted_count,
+        rejected=rejected_count,
+        duplicate=duplicate_count,
+        published=published_count,
+        is_synthetic=is_synthetic,
+        errors=errors[:10],
+        pending_spool_events=payload.pending_spool_events,
+    )
 
     logger.info(
-        "Collector %s (%s): accepted=%d rejected=%d duplicate=%d published=%d",
+        "Collector %s (%s): accepted=%d rejected=%d duplicate=%d published=%d pending_spool=%s",
         collector_id, collector.hostname,
         accepted_count, rejected_count, duplicate_count, published_count,
+        payload.pending_spool_events,
     )
 
     return CollectorIngestResponse(
@@ -394,5 +553,6 @@ async def ingest_collector_events(
         duplicate=duplicate_count,
         published=published_count,
         errors=errors[:20],  # cap error list in response
+        collector_id=collector_id,
     )
 

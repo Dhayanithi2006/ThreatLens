@@ -228,24 +228,61 @@ class AttackPathService:
             logger.warning(f"Cypher path query fallback or empty: {e}")
             records = []
 
-        # Filter out disabled nodes and edges for simulation mode
+        # Filter out disabled nodes and edges for simulation mode (with prefix-independent matching)
+        disabled_node_ids_lower = {str(nid).lower().strip() for nid in disabled_node_ids}
+        disabled_edge_keys_norm = set()
+        for src, tgt, rt in disabled_edge_keys:
+            s_l = str(src).lower().strip()
+            t_l = str(tgt).lower().strip()
+            r_str = rt.value if hasattr(rt, "value") else str(rt)
+            disabled_edge_keys_norm.add((s_l, t_l, r_str))
+            disabled_edge_keys_norm.add((s_l, t_l, ""))
+            s_unp = s_l.split(":", 1)[1] if ":" in s_l else s_l
+            t_unp = t_l.split(":", 1)[1] if ":" in t_l else t_l
+            disabled_edge_keys_norm.add((s_unp, t_unp, r_str))
+            disabled_edge_keys_norm.add((s_unp, t_unp, ""))
+            disabled_edge_keys_norm.add((s_l, t_unp, r_str))
+            disabled_edge_keys_norm.add((s_l, t_unp, ""))
+            disabled_edge_keys_norm.add((s_unp, t_l, r_str))
+            disabled_edge_keys_norm.add((s_unp, t_l, ""))
+
         filtered_records = []
         for rec in records:
             p_nodes = rec["path_nodes"]
             p_rels = rec["path_relationships"]
 
             # Check if any intermediate node is disabled
-            node_ids = {n["id"] for n in p_nodes}
-            if node_ids.intersection(disabled_node_ids):
+            is_node_disabled = False
+            for n in p_nodes:
+                nid = str(n.get("id", "")).lower().strip()
+                nid_unp = nid.split(":", 1)[1] if ":" in nid else nid
+                if any(dn in (nid, nid_unp) or (":" in dn and dn.split(":", 1)[1] == nid_unp) for dn in disabled_node_ids_lower):
+                    is_node_disabled = True
+                    break
+            if is_node_disabled:
                 continue
 
             # Check if any edge is disabled
             has_disabled_edge = False
             for r in p_rels:
-                src_l = r["source_id"].lower()
-                tgt_l = r["target_id"].lower()
-                rel_t = r["type"]
-                if (src_l, tgt_l, rel_t) in disabled_edge_keys or (src_l, tgt_l, "") in disabled_edge_keys:
+                src_l = str(r["source_id"]).lower().strip()
+                tgt_l = str(r["target_id"]).lower().strip()
+                rel_t = r.get("type", "")
+                rel_t_str = rel_t.value if hasattr(rel_t, "value") else str(rel_t)
+                src_unp = src_l.split(":", 1)[1] if ":" in src_l else src_l
+                tgt_unp = tgt_l.split(":", 1)[1] if ":" in tgt_l else tgt_l
+
+                candidates = [
+                    (src_l, tgt_l, rel_t_str),
+                    (src_l, tgt_l, ""),
+                    (src_unp, tgt_unp, rel_t_str),
+                    (src_unp, tgt_unp, ""),
+                    (src_l, tgt_unp, rel_t_str),
+                    (src_l, tgt_unp, ""),
+                    (src_unp, tgt_l, rel_t_str),
+                    (src_unp, tgt_l, ""),
+                ]
+                if any(c in disabled_edge_keys_norm for c in candidates):
                     has_disabled_edge = True
                     break
             if has_disabled_edge:
@@ -457,6 +494,7 @@ class AttackPathService:
                 "Calculated risk reflects target impact, step evidence certainty, and pivot friction. "
                 "A modeled path indicates architectural exposure, not proof of actual attacker traversal."
             ),
+            recommended_blast_radius_url=f"/api/v1/graphops/blast-radius?start_node_id={entry_node.id}",
         )
 
     def analyze_choke_points(
@@ -557,6 +595,7 @@ class AttackPathService:
                     affected_critical_assets=assets,
                     recommended_action=action,
                     intervention_details=details,
+                    recommended_blast_radius_url=f"/api/v1/graphops/blast-radius?start_node_id={ent_id}",
                 )
             )
 
@@ -651,6 +690,8 @@ class AttackPathService:
             if interv.source_id and interv.target_id:
                 rt = interv.relationship_type.value if interv.relationship_type else ""
                 disabled_edge_keys.add((interv.source_id.strip(), interv.target_id.strip(), rt))
+                if interv.action == InterventionAction.BLOCK_CONNECTION:
+                    disabled_edge_keys.add((interv.target_id.strip(), interv.source_id.strip(), rt))
 
         # Baseline analysis
         baseline_req = AttackPathRequest(
@@ -729,6 +770,73 @@ class AttackPathService:
             ),
         )
 
+    def _resolve_recipient_user_node(self, recipient_email: str) -> EnterpriseNode:
+        """
+        Resolves recipient email to the corresponding canonical User entity in the graph.
+        Does NOT choose an email node as primary when a matching user exists.
+        Preserves original email as evidence and provenance.
+        """
+        clean_email = recipient_email.strip()
+        if "<" in clean_email and ">" in clean_email:
+            clean_email = clean_email.split("<", 1)[1].split(">", 1)[0].strip()
+        if clean_email.lower().startswith("email:"):
+            clean_email = clean_email[6:].strip()
+        email_lower = clean_email.lower()
+
+        # 1. Search in-memory client if present
+        if hasattr(self.client, "nodes"):
+            for n in self.client.nodes.values():
+                lbls = [str(l).lower() for l in n.get("labels", [])]
+                nid = str(n.get("id", "")).lower()
+                if "user" in lbls or nid.startswith("user:"):
+                    props = n.get("properties", {})
+                    user_email = str(props.get("email") or props.get("mail") or "").lower().strip()
+                    user_id = str(props.get("user_id") or "").lower().strip()
+                    if user_email == email_lower or user_id == email_lower or nid == f"user:{email_lower}":
+                        return self.blast_service._record_to_enterprise_node(
+                            labels=n.get("labels", [NodeLabel.USER.value]),
+                            properties=n.get("properties", {}),
+                            fallback_id=n.get("id"),
+                        )
+            if hasattr(self.client, "aliases"):
+                alias_nid = self.client.aliases.get(email_lower) or self.client.aliases.get(f"user:{email_lower}")
+                if alias_nid and isinstance(alias_nid, str):
+                    target_n = self.client.nodes.get(alias_nid.lower())
+                    if target_n:
+                        lbls = [str(l).lower() for l in target_n.get("labels", [])]
+                        if "user" in lbls or str(target_n.get("id", "")).lower().startswith("user:"):
+                            return self.blast_service._record_to_enterprise_node(
+                                labels=target_n.get("labels", [NodeLabel.USER.value]),
+                                properties=target_n.get("properties", {}),
+                                fallback_id=target_n.get("id"),
+                            )
+
+        # 2. Query live Neo4j for User entity matching email
+        try:
+            user_cypher = """
+            MATCH (u:User)
+            WHERE toLower(u.email) = $email OR toLower(u.user_id) = $email OR toLower(u.id) = $user_id
+            RETURN u.id AS id, labels(u) AS labels, properties(u) AS properties
+            LIMIT 1
+            """
+            params = {
+                "email": email_lower,
+                "user_id": f"user:{email_lower}",
+            }
+            records = self.client.execute_query(user_cypher, params)
+            if records:
+                rec = records[0]
+                return self.blast_service._record_to_enterprise_node(
+                    labels=rec.get("labels", [NodeLabel.USER.value]),
+                    properties=rec.get("properties", {}),
+                    fallback_id=rec.get("id"),
+                )
+        except Exception as e:
+            logger.debug(f"Live Neo4j user query by email failed: {e}")
+
+        # 3. Fallback to general resolve_start_node (handles EmailAccount or generic entity)
+        return self.blast_service.resolve_start_node(recipient_email)
+
     def bridge_case_to_graph(self, case_id: str) -> CaseBridgeResponse:
         """
         Resolves an email investigation case to the organizational security graph.
@@ -760,7 +868,17 @@ class AttackPathService:
         mapped_entities: List[BridgeMappingItem] = []
         if recipient_email:
             try:
-                user_node = self.blast_service.resolve_start_node(recipient_email)
+                try:
+                    user_node = self._resolve_recipient_user_node(recipient_email)
+                except Exception as ne:
+                    # Fallback to in-memory mock client if live Neo4j is offline
+                    from backend.graphops.mock_client import get_mock_graphops_client
+                    mock_c = get_mock_graphops_client()
+                    self.client = mock_c
+                    from backend.graphops.blast_radius import BlastRadiusService
+                    self.blast_service = BlastRadiusService(mock_c)
+                    user_node = self._resolve_recipient_user_node(recipient_email)
+
                 primary_node = user_node
                 mapped_entities.append(
                     BridgeMappingItem(
@@ -773,17 +891,46 @@ class AttackPathService:
                     )
                 )
 
-                records = self.client.execute_query(
-                    "MATCH (u {id: $uid})-[:USES]->(d) RETURN d.id AS id, labels(d) AS labels, properties(d) AS properties LIMIT 1",
-                    {"uid": user_node.id},
-                )
-                if records:
-                    dev_rec = records[0]
-                    dev_id = dev_rec["id"]
+                # Query assigned device(s) for the mapped user
+                device_record = None
+                try:
+                    records = self.client.execute_query(
+                        "MATCH (u {id: $uid})-[:USES]->(d) RETURN d.id AS id, labels(d) AS labels, properties(d) AS properties LIMIT 1",
+                        {"uid": user_node.id},
+                    )
+                    if records:
+                        device_record = records[0]
+                except Exception:
+                    pass
+
+                if not device_record and hasattr(self.client, "edges"):
+                    target_uids = {user_node.id.lower()}
+                    if hasattr(self.client, "aliases"):
+                        for k, v in self.client.aliases.items():
+                            if v.lower() == user_node.id.lower():
+                                target_uids.add(k.lower())
+                    for e in self.client.edges:
+                        src_id = str(e.get("source_id", "")).lower()
+                        rel = str(e.get("relationship_type", "")).upper()
+                        if src_id in target_uids and rel in ("USES", "OWNS", "ASSIGNED_TO", "LOGGED_IN_TO"):
+                            tgt_id = str(e.get("target_id", "")).lower()
+                            target_node = self.client.nodes.get(tgt_id)
+                            if target_node and ("device" in [l.lower() for l in target_node.get("labels", [])] or tgt_id.startswith("device:")):
+                                device_record = {
+                                    "id": target_node.get("id", tgt_id),
+                                    "labels": target_node.get("labels", ["Device"]),
+                                    "properties": target_node.get("properties", {}),
+                                }
+                                break
+
+                if device_record:
+                    dev_id = device_record["id"]
+                    dev_props = device_record.get("properties", {})
+                    hostname = dev_props.get("hostname") or dev_props.get("name") or dev_id
                     mapped_entities.append(
                         BridgeMappingItem(
                             evidence_type="ASSIGNED_DEVICE",
-                            raw_value=dev_rec.get("properties", {}).get("hostname", dev_id),
+                            raw_value=hostname,
                             mapped_node_id=dev_id,
                             node_label=NodeLabel.DEVICE,
                             match_confidence=1.0,

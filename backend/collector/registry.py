@@ -43,6 +43,10 @@ def _get_lock_path() -> Path:
     p = _get_registry_path()
     return p.with_name(p.name + ".lock")
 
+def _get_stats_path() -> Path:
+    p = _get_registry_path()
+    return p.with_name(p.stem + "_telemetry_stats.json")
+
 _THREAD_LOCK = threading.RLock()
 
 
@@ -62,6 +66,42 @@ def _registry_lock():
         except Exception as exc:
             logger.error("Registry file lock acquisition error: %s — falling back to thread lock", exc)
             yield
+
+
+def _load_stats_unlocked() -> Dict[str, Any]:
+    path = _get_stats_path()
+    if not path.exists():
+        return {
+            "total_accepted_events": 0,
+            "total_rejected_events": 0,
+            "auth_failures_count": 0,
+            "recent_auth_failures": [],
+            "recent_ingestion_activity": [],
+        }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
+    except Exception as e:
+        logger.error("Failed to load telemetry stats: %s", e)
+    return {
+        "total_accepted_events": 0,
+        "total_rejected_events": 0,
+        "auth_failures_count": 0,
+        "recent_auth_failures": [],
+        "recent_ingestion_activity": [],
+    }
+
+
+def _save_stats_unlocked(data: Dict[str, Any]) -> None:
+    path = _get_stats_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as e:
+        logger.error("Failed to save telemetry stats: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -162,17 +202,23 @@ def auto_provision_device_node(
     try:
         from backend.graphops.client import get_graphops_client
         client = get_graphops_client()
-        # Fast path if client is already known to be in mock/disconnected mode
-        if getattr(client, "mock_mode", False) is True or getattr(client, "_is_available", None) is False:
+        try:
+            client.execute_query(cypher, params)
+            logger.info("Auto-provisioned Neo4j Device node for enrolled collector: %s", device_id)
+        except Exception as exc:
+            logger.debug("Neo4j auto-provision note for %s: %s", device_id, exc)
             fallback = getattr(client, "_get_mock_fallback", lambda: None)()
             if fallback:
                 fallback.execute_query(cypher, params)
-            return
-
-        client.execute_query(cypher, params)
-        logger.info("Auto-provisioned Neo4j Device node for enrolled collector: %s", device_id)
-    except Exception as exc:
-        logger.debug("Neo4j auto-provision note for %s: %s", device_id, exc)
+            else:
+                from backend.graphops.mock_client import get_mock_graphops_client
+                get_mock_graphops_client().execute_query(cypher, params)
+    finally:
+        try:
+            from backend.graphops.centrality import invalidate_centrality_cache
+            invalidate_centrality_cache()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +241,8 @@ class CollectorRecord:
         "status",
         "device_node_id",
         "recent_errors",
+        "pending_spool_events",
+        "auth_failures",
     )
 
     def __init__(self, d: Dict[str, Any]):
@@ -210,9 +258,42 @@ class CollectorRecord:
         self.status: str = d.get("status", "ENROLLED")
         self.device_node_id: str = d.get("device_node_id", "")
         self.recent_errors: List[str] = d.get("recent_errors", [])
+        self.pending_spool_events: int = d.get("pending_spool_events", 0)
+        self.auth_failures: int = d.get("auth_failures", 0)
+
+    def online_status(self, threshold_seconds: int = 600) -> str:
+        """
+        Determines real-time operational connectivity state:
+        - REVOKED: Credentials explicitly invalidated
+        - ENROLLED (PENDING): Initial state awaiting first event delivery
+        - ACTIVELY SENDING: Connected and streaming within threshold (default 10m)
+        - DEGRADED: Inactive beyond threshold with logged errors
+        - CONNECTED (IDLE): Past communication recorded, but silent beyond threshold
+        """
+        if self.status == "REVOKED":
+            return "REVOKED"
+        if not self.last_seen or (self.event_count or 0) == 0:
+            return "ENROLLED (PENDING)"
+        try:
+            ls = datetime.fromisoformat(self.last_seen.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - ls).total_seconds()
+            if age <= threshold_seconds:
+                return "ACTIVELY SENDING"
+            else:
+                if (self.error_count or 0) > 0:
+                    return "DEGRADED"
+                return "CONNECTED (IDLE)"
+        except Exception:
+            return "ENROLLED (PENDING)"
+
+    def is_online(self, threshold_seconds: int = 600) -> bool:
+        return self.online_status(threshold_seconds) == "ACTIVELY SENDING"
 
     def to_dict(self) -> Dict[str, Any]:
-        return {k: getattr(self, k) for k in self.__slots__}
+        d = {k: getattr(self, k) for k in self.__slots__}
+        d["online_status"] = self.online_status()
+        d["is_online"] = self.is_online()
+        return d
 
     def is_active(self) -> bool:
         return self.status == "ACTIVE"
@@ -309,31 +390,120 @@ def enrol_collector(
     return result
 
 
-def authenticate_collector(collector_id: str, token: str) -> Optional[CollectorRecord]:
+def record_auth_failure(
+    collector_id: str,
+    ip_address: str = "",
+    reason: str = "INVALID_CREDENTIALS",
+) -> None:
+    """Records an authentication failure both globally and on the specific collector if known."""
+    with _registry_lock():
+        stats = _load_stats_unlocked()
+        stats["auth_failures_count"] = stats.get("auth_failures_count", 0) + 1
+        failures = stats.get("recent_auth_failures", [])
+        failures.append({
+            "timestamp": _now_iso(),
+            "collector_id": collector_id or "UNKNOWN",
+            "ip_address": ip_address,
+            "reason": reason,
+        })
+        stats["recent_auth_failures"] = failures[-50:]  # Keep last 50
+        _save_stats_unlocked(stats)
+
+        # Update per-collector counter if collector exists
+        if collector_id:
+            reg = _load_registry_unlocked()
+            if collector_id in reg:
+                reg[collector_id]["auth_failures"] = reg[collector_id].get("auth_failures", 0) + 1
+                _save_registry_unlocked(reg)
+
+    logger.warning("Collector authentication failure: id=%s ip=%s reason=%s", collector_id, ip_address, reason)
+
+    try:
+        from backend.governance.audit import record_audit_event
+        record_audit_event(
+            event_type="COLLECTOR_AUTH_FAILED",
+            actor_id=collector_id or "unknown",
+            target_resource=f"collector:{collector_id}",
+            action="AUTHENTICATE",
+            details={"collector_id": collector_id, "ip_address": ip_address, "reason": reason},
+        )
+    except Exception as exc:
+        logger.debug("Audit logging for auth failure skipped: %s", exc)
+
+
+def record_ingestion_activity(
+    collector_id: str,
+    hostname: str,
+    accepted: int,
+    rejected: int,
+    duplicate: int,
+    published: int,
+    is_synthetic: bool = False,
+    errors: Optional[List[str]] = None,
+    pending_spool_events: Optional[int] = None,
+) -> None:
+    """Records an ingestion activity batch for the security overview stream."""
+    with _registry_lock():
+        stats = _load_stats_unlocked()
+        stats["total_accepted_events"] = stats.get("total_accepted_events", 0) + accepted
+        stats["total_rejected_events"] = stats.get("total_rejected_events", 0) + rejected
+        activity = stats.get("recent_ingestion_activity", [])
+        activity.append({
+            "timestamp": _now_iso(),
+            "collector_id": collector_id,
+            "hostname": hostname,
+            "accepted": accepted,
+            "rejected": rejected,
+            "duplicate": duplicate,
+            "published": published,
+            "is_synthetic": is_synthetic,
+            "telemetry_source": "SYNTHETIC_SIMULATION" if is_synthetic else "GENUINE_WINDOWS_TELEMETRY",
+            "status": "ACCEPTED" if (published > 0 or accepted > 0) else ("REJECTED" if rejected > 0 else "IDLE"),
+            "errors": errors or [],
+            "pending_spool_events": pending_spool_events if pending_spool_events is not None else 0,
+        })
+        stats["recent_ingestion_activity"] = activity[-50:]  # Keep last 50
+        _save_stats_unlocked(stats)
+
+
+def authenticate_collector(
+    collector_id: str,
+    token: str,
+    ip_address: str = "",
+) -> Optional[CollectorRecord]:
     """
     Validates (collector_id, token) pair.
     Returns CollectorRecord on success; None on failure.
+    Records authentication failures on bad credentials or revoked devices.
     Never logs the raw token.
     """
     with _registry_lock():
         registry = _load_registry_unlocked()
         rec = registry.get(collector_id)
-        if rec is None:
-            return None
-        stored_digest = rec.get("token_digest", "")
-        if not stored_digest:
-            return None
-        if not _verify_token(token, stored_digest):
-            return None
-        if rec.get("status") == "REVOKED":
-            return None
-        return CollectorRecord(rec)
+
+    if rec is None:
+        record_auth_failure(collector_id, ip_address, "UNKNOWN_COLLECTOR")
+        return None
+
+    if rec.get("status") == "REVOKED":
+        record_auth_failure(collector_id, ip_address, "REVOKED_CREDENTIALS")
+        return None
+
+    stored_digest = rec.get("token_digest", "")
+    if not stored_digest or not _verify_token(token, stored_digest):
+        record_auth_failure(collector_id, ip_address, "INVALID_TOKEN")
+        return None
+
+    return CollectorRecord(rec)
 
 
 def record_event_delivery(
     collector_id: str,
     count: int = 1,
     error: Optional[str] = None,
+    accepted: int = 0,
+    rejected: int = 0,
+    pending_spool_events: Optional[int] = None,
 ) -> None:
     """Updates last-seen, event/error counters and status after a successful or failed delivery."""
     with _registry_lock():
@@ -342,15 +512,47 @@ def record_event_delivery(
         if rec is None:
             return
         rec["last_seen"] = _now_iso()
+        if pending_spool_events is not None:
+            rec["pending_spool_events"] = pending_spool_events
+        if count > 0:
+            rec["event_count"] = rec.get("event_count", 0) + count
+            rec["status"] = "ACTIVE"
         if error:
             rec["error_count"] = rec.get("error_count", 0) + 1
             errs: List[str] = rec.get("recent_errors", [])
             errs.append(f"{_now_iso()} {error[:200]}")
             rec["recent_errors"] = errs[-10:]  # keep last 10
-        else:
-            rec["event_count"] = rec.get("event_count", 0) + count
-            rec["status"] = "ACTIVE"
         _save_registry_unlocked(registry)
+
+
+def get_collector_overview(online_threshold_seconds: int = 600) -> Dict[str, Any]:
+    """Compiles aggregated security overview metrics for all enrolled collectors and telemetry streams."""
+    with _registry_lock():
+        registry = _load_registry_unlocked()
+        stats = _load_stats_unlocked()
+
+    collectors = [CollectorRecord(v) for v in registry.values()]
+    online_count = sum(1 for c in collectors if c.online_status(online_threshold_seconds) == "ACTIVELY SENDING")
+    offline_count = sum(1 for c in collectors if c.online_status(online_threshold_seconds) in ("OFFLINE", "CONNECTED (IDLE)", "ENROLLED (PENDING)", "DEGRADED"))
+    revoked_count = sum(1 for c in collectors if c.status == "REVOKED")
+    total_events = sum(c.event_count for c in collectors)
+    total_errors = sum(c.error_count for c in collectors)
+
+    return {
+        "total_registered_devices": len(collectors),
+        "online_collectors": online_count,
+        "offline_collectors": offline_count,
+        "revoked_collectors": revoked_count,
+        "total_events_received": total_events,
+        "total_accepted_events": stats.get("total_accepted_events", total_events),
+        "total_rejected_events": stats.get("total_rejected_events", 0),
+        "total_ingestion_errors": total_errors,
+        "authentication_failures_count": stats.get("auth_failures_count", 0),
+        "recent_auth_failures": stats.get("recent_auth_failures", []),
+        "recent_ingestion_activity": stats.get("recent_ingestion_activity", []),
+        "collectors": [c.to_dict() for c in collectors],
+        "timestamp": _now_iso(),
+    }
 
 
 def list_collectors() -> List[CollectorRecord]:
@@ -368,7 +570,7 @@ def get_collector(collector_id: str) -> Optional[CollectorRecord]:
         return CollectorRecord(rec) if rec else None
 
 
-def revoke_collector(collector_id: str, actor: str) -> bool:
+def revoke_collector(collector_id: str, actor: str = "system") -> bool:
     """Revokes a collector token (sets status=REVOKED). Returns True if found."""
     with _registry_lock():
         registry = _load_registry_unlocked()

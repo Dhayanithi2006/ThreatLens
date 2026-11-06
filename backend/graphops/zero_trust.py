@@ -9,7 +9,7 @@ are potential policy discrepancies (not conclusive proof of malicious breach).
 """
 
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from datetime import datetime, timezone
 import logging
 
@@ -48,6 +48,14 @@ class ZeroTrustAccessItem(BaseModel):
         default=None,
         description="Number of empirical telemetry observations supporting this relationship"
     )
+    blast_radius_pivot_url: Optional[str] = Field(
+        default=None,
+        description="Navigation URL to analyze blast radius for the affected target entity in Module 3"
+    )
+    graph_pivot_url: Optional[str] = Field(
+        default=None,
+        description="Navigation URL to locate and explore the target entity in Module 2 Knowledge Graph"
+    )
 
 
 class ZeroTrustAuditResult(BaseModel):
@@ -71,6 +79,12 @@ class ZeroTrustAuditResult(BaseModel):
         description="Metadata describing audit scope, filters, and entity context applied"
     )
 
+    @computed_field
+    @property
+    def items(self) -> List[ZeroTrustAccessItem]:
+        """Convenience property exposing access_breakdown as items for API compatibility."""
+        return self.access_breakdown
+
 
 class ZeroTrustAuditService:
     """
@@ -85,6 +99,8 @@ class ZeroTrustAuditService:
         self,
         entity_id: Optional[str] = None,
         status_filter: Optional[str] = None,
+        severity: Optional[str] = None,
+        search: Optional[str] = None,
     ) -> ZeroTrustAuditResult:
         """
         Queries Neo4j for entitled vs observed subgraphs and derives
@@ -163,6 +179,7 @@ class ZeroTrustAuditService:
                     f"Entitlement verified by empirical telemetry "
                     f"({'direct user activity' if direct_active else 'assigned endpoint activity'})."
                 )
+                tgt_id_str = str(ent.get("target_id", ""))
                 access_items.append(
                     ZeroTrustAccessItem(
                         source_id=ent.get("user_id"),
@@ -178,16 +195,19 @@ class ZeroTrustAuditService:
                         basis=basis_desc,
                         policy_id=f"POL-IAM-{u_id[-6:] if len(u_id)>=6 else u_id}-{t_id[-6:] if len(t_id)>=6 else t_id}",
                         supporting_events_count=max(1, obs_count),
+                        blast_radius_pivot_url=f"/api/v1/graphops/blast-radius?start_node_id={tgt_id_str}&max_hops=2",
+                        graph_pivot_url=f"/api/v1/graphops/search?query={tgt_id_str}",
                     )
                 )
             else:
                 dormant_count += 1
-                severity = "CRITICAL" if t_crit in ("CRITICAL", "HIGH") else "MEDIUM"
+                severity_val = "CRITICAL" if t_crit in ("CRITICAL", "HIGH") else "MEDIUM"
                 rec_action = (
                     f"Review dormant entitlement '{ent.get('user_id')} -> {ent.get('target_id')}'. "
                     f"Identity has not exercised this privilege during the observation window; validate operational "
                     f"requirement before considering revocation (unobserved grants may represent contingency or scheduled access)."
                 )
+                tgt_id_str = str(ent.get("target_id", ""))
                 access_items.append(
                     ZeroTrustAccessItem(
                         source_id=ent.get("user_id"),
@@ -198,11 +218,13 @@ class ZeroTrustAuditService:
                         access_type="HAS_PERMISSION",
                         status="OVER_PRIVILEGED_DORMANT",
                         discrepancy_type="UNEXERCISED_GRANT",
-                        risk_severity=severity,
+                        risk_severity=severity_val,
                         recommendation=rec_action,
                         basis="Configured IAM entitlement has no recorded access telemetry during the observation window.",
                         policy_id=f"POL-IAM-{u_id[-6:] if len(u_id)>=6 else u_id}-{t_id[-6:] if len(t_id)>=6 else t_id}",
                         supporting_events_count=0,
+                        blast_radius_pivot_url=f"/api/v1/graphops/blast-radius?start_node_id={tgt_id_str}&max_hops=2",
+                        graph_pivot_url=f"/api/v1/graphops/search?query={tgt_id_str}",
                     )
                 )
                 recommended_revocations.append({
@@ -229,12 +251,13 @@ class ZeroTrustAuditService:
 
             if (s_id, t_id) not in entitled_pairs:
                 unentitled_count += 1
-                severity = "HIGH" if t_crit in ("CRITICAL", "HIGH") else "MEDIUM"
+                severity_val = "HIGH" if t_crit in ("CRITICAL", "HIGH") else "MEDIUM"
                 rec_action = (
                     f"Investigate unentitled connection '{obs.get('source_id')} -> {obs.get('target_id')}'. "
                     f"Potential policy discrepancy or unmapped workflow; validate entitlement coverage or adjust segmentation "
                     f"(observed connections without matching grants indicate policy discrepancies, not conclusive proof of breach)."
                 )
+                tgt_id_str = str(obs.get("target_id", ""))
                 access_items.append(
                     ZeroTrustAccessItem(
                         source_id=obs.get("source_id"),
@@ -245,11 +268,13 @@ class ZeroTrustAuditService:
                         access_type=obs.get("rel_type", "OBSERVED_CONNECTION"),
                         status="UNENTITLED_SHADOW",
                         discrepancy_type="POTENTIAL_UNENTITLED_ACCESS",
-                        risk_severity=severity,
+                        risk_severity=severity_val,
                         recommendation=rec_action,
                         basis="Empirical telemetry indicates network connection or logon without matching explicit HAS_PERMISSION grant.",
                         policy_id=None,
                         supporting_events_count=observed_pair_counts.get((s_id, t_id), 1),
+                        blast_radius_pivot_url=f"/api/v1/graphops/blast-radius?start_node_id={tgt_id_str}&max_hops=2",
+                        graph_pivot_url=f"/api/v1/graphops/search?query={tgt_id_str}",
                     )
                 )
 
@@ -266,6 +291,22 @@ class ZeroTrustAuditService:
             filtered_items = [
                 item for item in filtered_items
                 if item.status.upper() == s_filter or item.discrepancy_type.upper() == s_filter
+            ]
+        if severity:
+            sev_filter = severity.strip().upper()
+            filtered_items = [
+                item for item in filtered_items
+                if item.risk_severity.upper() == sev_filter
+            ]
+        if search:
+            query = search.strip().lower()
+            filtered_items = [
+                item for item in filtered_items
+                if query in str(item.source_id).lower()
+                or query in str(item.target_id).lower()
+                or query in str(item.policy_id or "").lower()
+                or query in str(item.recommendation).lower()
+                or query in str(item.basis or "").lower()
             ]
 
         total_entitled = len(entitled_records)
@@ -297,6 +338,8 @@ class ZeroTrustAuditService:
             audit_scope={
                 "filtered_by_entity": entity_id,
                 "status_filter": status_filter,
+                "severity_filter": severity,
+                "search_filter": search,
                 "total_items_returned": len(filtered_items),
                 "total_unfiltered_items": len(access_items),
             },

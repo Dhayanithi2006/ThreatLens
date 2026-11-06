@@ -16,6 +16,7 @@ from backend.graphops.schema import (
     RelationshipType,
     EvidenceClass,
     CriticalityTier,
+    canonicalize_node_id,
 )
 from backend.models.graphops import (
     SecurityEventType,
@@ -242,6 +243,11 @@ class GraphOpsEventProcessor:
                         "target_id": target_res,
                         "timestamp": event.occurred_at,
                     })
+                    try:
+                        from backend.graphops.centrality import invalidate_centrality_cache
+                        invalidate_centrality_cache()
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.warning(f"Could not link LOGGED_IN_TO relationship: {e}")
 
@@ -265,6 +271,11 @@ class GraphOpsEventProcessor:
                         "port": port,
                         "timestamp": event.occurred_at,
                     })
+                    try:
+                        from backend.graphops.centrality import invalidate_centrality_cache
+                        invalidate_centrality_cache()
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.warning(f"Could not link OBSERVED_CONNECTION relationship: {e}")
 
@@ -521,14 +532,39 @@ class GraphOpsEventProcessor:
         self,
         source_event_id: Optional[str] = None,
         entity_id: Optional[str] = None,
+        severity: Optional[str] = None,
+        finding_type: Optional[str] = None,
+        min_score: Optional[float] = None,
+        search: Optional[str] = None,
         limit: int = 50,
     ) -> List[SecurityFindingRecord]:
-        """Retrieves cached findings, optionally filtered by event or entity."""
+        """Retrieves cached findings, optionally filtered by event, entity, severity, analysis type, score, and keyword search."""
         results = list(self._findings_store.values())
         if source_event_id:
             results = [f for f in results if f.source_event_id == source_event_id]
         if entity_id:
             results = [f for f in results if f.affected_entity_id.lower() == entity_id.lower()]
+        if severity:
+            sev_norm = severity.strip().upper()
+            results = [f for f in results if (hasattr(f.severity, "value") and f.severity.value == sev_norm) or str(f.severity).upper() == sev_norm]
+        if finding_type:
+            ft_norm = finding_type.strip().upper()
+            results = [f for f in results if ft_norm in str(f.analysis_type).upper()]
+        if min_score is not None:
+            def _score_val(f):
+                det = f.details or {}
+                return float(det.get("normalized_score") or det.get("structural_anomaly_score") or (100 if f.severity in ("CRITICAL", CriticalityTier.CRITICAL) else 50))
+            results = [f for f in results if _score_val(f) >= min_score]
+        if search:
+            q = search.strip().lower()
+            results = [
+                f for f in results
+                if q in f.finding_id.lower()
+                or q in f.title.lower()
+                or q in f.summary.lower()
+                or q in f.affected_entity_id.lower()
+                or q in str(f.critical_asset_impacted or "").lower()
+            ]
         return results[:limit]
 
     def get_finding_by_id(self, finding_id: str) -> Optional[SecurityFindingRecord]:

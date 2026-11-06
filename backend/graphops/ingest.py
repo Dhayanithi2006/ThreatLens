@@ -46,6 +46,73 @@ logger = logging.getLogger("threatlens.graphops.ingest")
 BATCH_SIZE = 50
 
 
+def canonicalize_topology_node_id(nid: Any, labels: Optional[List[str]] = None, props: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Guarantees every node returned by topology retrieval possesses a valid canonical prefix:
+    user, device, server, app, db, ip, vuln, critical, event, or email.
+    Preserves already-canonical IDs, avoids double prefixing, and normalizes namespaces.
+    """
+    if not nid:
+        return nid
+    clean = str(nid).strip()
+    VALID_PREFIXES = ("user", "device", "server", "app", "db", "ip", "vuln", "critical", "event", "email")
+
+    if ":" in clean:
+        prefix, suffix = clean.split(":", 1)
+        prefix_clean = prefix.lower().strip()
+        if prefix_clean in VALID_PREFIXES:
+            while suffix.lower().startswith(f"{prefix_clean}:"):
+                suffix = suffix[len(prefix_clean) + 1:].strip()
+            return f"{prefix_clean}:{suffix}"
+
+        alias_map = {
+            "evt": "event",
+            "case": "event",
+            "securityevent": "event",
+            "crit": "critical",
+            "crownjewel": "critical",
+            "database": "db",
+            "application": "app",
+            "vulnerability": "vuln",
+            "cve": "vuln",
+            "mail": "email",
+            "usr": "user",
+            "dev": "device",
+            "workstation": "device",
+            "endpoint": "device",
+            "srv": "server",
+        }
+        if prefix_clean in alias_map:
+            target_prefix = alias_map[prefix_clean]
+            while suffix.lower().startswith(f"{target_prefix}:"):
+                suffix = suffix[len(target_prefix) + 1:].strip()
+            return f"{target_prefix}:{suffix}"
+
+    lbls_lower = [str(l).lower() for l in (labels or [])]
+    if any(l in ("securityevent", "event") for l in lbls_lower) or clean.lower().startswith(("ev-", "evt-", "wev-")):
+        return canonicalize_node_id(NodeLabel.SECURITY_EVENT, clean)
+    if any(l in ("user",) for l in lbls_lower) or clean.lower().startswith(("usr-", "user-")):
+        return canonicalize_node_id(NodeLabel.USER, clean)
+    if any(l in ("device", "workstation", "endpoint") for l in lbls_lower) or clean.lower().startswith(("dev-", "ws-", "laptop-", "pc-")):
+        return canonicalize_node_id(NodeLabel.DEVICE, clean)
+    if any(l in ("server", "host") for l in lbls_lower) or clean.lower().startswith(("srv-", "server-", "host-")):
+        return canonicalize_node_id(NodeLabel.SERVER, clean)
+    if any(l in ("application", "app") for l in lbls_lower) or clean.lower().startswith(("app-", "api-", "svc-")):
+        return canonicalize_node_id(NodeLabel.APPLICATION, clean)
+    if any(l in ("database", "db") for l in lbls_lower) or clean.lower().startswith(("db-", "database-")):
+        return canonicalize_node_id(NodeLabel.DATABASE, clean)
+    if any(l in ("ipaddress", "ip") for l in lbls_lower) or clean.replace(".", "").isdigit():
+        return canonicalize_node_id(NodeLabel.IP_ADDRESS, clean)
+    if any(l in ("vulnerability", "vuln") for l in lbls_lower) or clean.lower().startswith("cve-"):
+        return canonicalize_node_id(NodeLabel.VULNERABILITY, clean)
+    if any(l in ("criticalasset", "critical") for l in lbls_lower) or clean.lower().startswith(("crit-", "asset-")):
+        return canonicalize_node_id(NodeLabel.CRITICAL_ASSET, clean)
+    if any(l in ("emailaccount", "email") for l in lbls_lower) or "@" in clean:
+        return canonicalize_node_id(NodeLabel.EMAIL_ACCOUNT, clean)
+
+    return f"device:{clean.lower()}"
+
+
 class GraphOpsIngestionEngine:
     """
     Ingests and normalizes enterprise graph datasets into Neo4j with full validation and idempotency.
@@ -629,6 +696,14 @@ class GraphOpsIngestionEngine:
         elif errors and nodes_imported == 0 and relationships_imported == 0 and nodes_updated == 0 and relationships_updated == 0:
             status = "FAILED"
 
+        # Invalidate centrality metrics cache upon structural graph mutation
+        if nodes_imported > 0 or relationships_imported > 0 or nodes_updated > 0 or relationships_updated > 0:
+            try:
+                from backend.graphops.centrality import invalidate_centrality_cache
+                invalidate_centrality_cache()
+            except Exception:
+                pass
+
         return IngestSummaryResponse(
             status=status,
             dataset_name=payload.dataset_name,
@@ -1023,6 +1098,207 @@ class GraphOpsIngestionEngine:
             "relationship_counts_by_type": rel_counts,
             "critical_assets": critical_records,
             "status": "POPULATED" if node_counts else "EMPTY",
+        }
+
+    def get_graph_topology(
+        self,
+        search: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        relationship_type: Optional[str] = None,
+        evidence_class: Optional[str] = None,
+        limit: int = 250,
+    ) -> Dict[str, Any]:
+        """
+        Retrieves, searches, and filters enterprise knowledge graph topology.
+        Preserves canonical identifiers, returns typed nodes and relationships with
+        evidence classification, provenance, timestamps, and ontological categories.
+        """
+        raw_nodes: List[Dict[str, Any]] = []
+        raw_edges: List[Dict[str, Any]] = []
+        id_canonical_map: Dict[str, str] = {}
+        seen_node_ids: Set[str] = set()
+
+        # 1. Fetch nodes and edges from client (in-memory or live Neo4j)
+        if hasattr(self.client, "nodes") and hasattr(self.client, "edges"):
+            for nid, n in self.client.nodes.items():
+                lbls = n.get("labels", ["Entity"])
+                props = dict(n.get("properties", {}))
+                orig_id = n.get("id", nid)
+                canonical_nid = canonicalize_topology_node_id(orig_id, lbls, props)
+                id_canonical_map[orig_id] = canonical_nid
+                id_canonical_map[nid] = canonical_nid
+                if canonical_nid in seen_node_ids:
+                    continue
+                seen_node_ids.add(canonical_nid)
+                raw_nodes.append({
+                    "id": canonical_nid,
+                    "labels": lbls,
+                    "label": lbls[0] if lbls else "Entity",
+                    "name": props.get("name") or props.get("hostname") or props.get("email") or canonical_nid,
+                    "criticality": str(props.get("criticality", "MEDIUM")).upper(),
+                    "category": lbls[0] if lbls else "Entity",
+                    "is_isolated": props.get("is_isolated", False),
+                    "properties": props,
+                })
+            for e in self.client.edges:
+                rel_props = dict(e.get("properties", {}))
+                rel_type = e.get("relationship_type") or e.get("type", "CONNECTED_TO")
+                ev_cls = str(rel_props.get("evidence_class") or e.get("evidence_class") or "OBSERVED").upper()
+                src_id = id_canonical_map.get(e.get("source_id"), e.get("source_id"))
+                tgt_id = id_canonical_map.get(e.get("target_id"), e.get("target_id"))
+                raw_edges.append({
+                    "id": f"{src_id}->{tgt_id}:{rel_type}",
+                    "source_id": src_id,
+                    "target_id": tgt_id,
+                    "relationship_type": rel_type,
+                    "evidence_class": ev_cls,
+                    "weight": float(rel_props.get("weight") or rel_props.get("traversal_cost") or 1.0),
+                    "traversal_cost": float(rel_props.get("traversal_cost") or rel_props.get("weight") or 1.0),
+                    "provenance": rel_props.get("provenance", "Enterprise Topology"),
+                    "timestamp": rel_props.get("timestamp") or rel_props.get("last_observed"),
+                    "properties": rel_props,
+                })
+        else:
+            try:
+                node_query = """
+                MATCH (n)
+                RETURN n.id AS id, labels(n) AS labels, properties(n) AS properties
+                """
+                node_records = self.client.execute_query(node_query)
+                for nr in node_records:
+                    lbls = nr.get("labels") or ["Entity"]
+                    props = nr.get("properties") or {}
+                    orig_id = nr.get("id") or props.get("id")
+                    if not orig_id:
+                        continue
+                    canonical_nid = canonicalize_topology_node_id(orig_id, lbls, props)
+                    id_canonical_map[orig_id] = canonical_nid
+                    if canonical_nid in seen_node_ids:
+                        continue
+                    seen_node_ids.add(canonical_nid)
+                    raw_nodes.append({
+                        "id": canonical_nid,
+                        "labels": lbls,
+                        "label": lbls[0] if lbls else "Entity",
+                        "name": props.get("name") or props.get("hostname") or props.get("email") or canonical_nid,
+                        "criticality": str(props.get("criticality", "MEDIUM")).upper(),
+                        "category": lbls[0] if lbls else "Entity",
+                        "is_isolated": props.get("is_isolated", False),
+                        "properties": props,
+                    })
+
+                edge_query = """
+                MATCH (s)-[r]->(t)
+                RETURN s.id AS source_id, t.id AS target_id, type(r) AS rel_type, properties(r) AS properties
+                """
+                edge_records = self.client.execute_query(edge_query)
+                for er in edge_records:
+                    props = er.get("properties") or {}
+                    rel_type = er.get("rel_type", "CONNECTED_TO")
+                    ev_cls = str(props.get("evidence_class", "OBSERVED")).upper()
+                    src_id = id_canonical_map.get(er.get("source_id"), er.get("source_id"))
+                    tgt_id = id_canonical_map.get(er.get("target_id"), er.get("target_id"))
+                    raw_edges.append({
+                        "id": f"{src_id}->{tgt_id}:{rel_type}",
+                        "source_id": src_id,
+                        "target_id": tgt_id,
+                        "relationship_type": rel_type,
+                        "evidence_class": ev_cls,
+                        "weight": float(props.get("weight") or props.get("traversal_cost") or 1.0),
+                        "traversal_cost": float(props.get("traversal_cost") or props.get("weight") or 1.0),
+                        "provenance": props.get("provenance", "Enterprise Topology"),
+                        "timestamp": props.get("timestamp") or props.get("last_observed"),
+                        "properties": props,
+                    })
+            except Exception as e:
+                logger.warning("Neo4j unreachable for topology query (%s); falling back to in-memory mock client.", e)
+                from backend.graphops.mock_client import get_mock_graphops_client
+                mock_c = get_mock_graphops_client()
+                return GraphOpsIngestionEngine(mock_c).get_graph_topology(
+                    search=search,
+                    entity_type=entity_type,
+                    relationship_type=relationship_type,
+                    evidence_class=evidence_class,
+                    limit=limit,
+                )
+
+        # 2. Extract ontological categories
+        entity_categories = sorted(list({n["label"] for n in raw_nodes if n.get("label")}))
+        relationship_categories = sorted(list({e["evidence_class"] for e in raw_edges if e.get("evidence_class")}))
+        relationship_types = sorted(list({e["relationship_type"] for e in raw_edges if e.get("relationship_type")}))
+
+        # 3. Apply Node Filters (search and entity_type)
+        filtered_nodes = []
+        search_lower = search.strip().lower() if search else None
+        target_entity_type = entity_type.strip().lower() if entity_type else None
+
+        for n in raw_nodes:
+            if target_entity_type:
+                labels_lower = [lbl.lower() for lbl in n.get("labels", [])]
+                if target_entity_type not in labels_lower and n.get("label", "").lower() != target_entity_type:
+                    continue
+
+            if search_lower:
+                props = n.get("properties", {})
+                searchable_strings = [
+                    n.get("id", ""),
+                    n.get("name", ""),
+                    n.get("label", ""),
+                    str(props.get("hostname", "")),
+                    str(props.get("email", "")),
+                    str(props.get("ip_address", "")),
+                    str(props.get("ip", "")),
+                    str(props.get("department", "")),
+                    str(props.get("role", "")),
+                ]
+                if not any(search_lower in s.lower() for s in searchable_strings):
+                    continue
+
+            filtered_nodes.append(n)
+
+        # Enforce limit on nodes
+        if limit and limit > 0:
+            filtered_nodes = filtered_nodes[:limit]
+
+        retained_node_ids = {n["id"] for n in filtered_nodes}
+
+        # 4. Apply Relationship Filters (relationship_type, evidence_class, endpoints)
+        filtered_edges = []
+        target_rel_type = relationship_type.strip().lower() if relationship_type else None
+        target_ev_class = evidence_class.strip().upper() if evidence_class else None
+
+        for e in raw_edges:
+            # Respect filtering by endpoints unless no search/entity_type filter was applied
+            if search_lower or target_entity_type:
+                if e["source_id"] not in retained_node_ids or e["target_id"] not in retained_node_ids:
+                    continue
+
+            if target_rel_type and e["relationship_type"].lower() != target_rel_type:
+                continue
+
+            if target_ev_class and e["evidence_class"] != target_ev_class:
+                continue
+
+            filtered_edges.append(e)
+
+        if limit and limit > 0:
+            filtered_edges = filtered_edges[:limit * 2]
+
+        return {
+            "total_nodes": len(filtered_nodes),
+            "total_edges": len(filtered_edges),
+            "nodes": filtered_nodes,
+            "edges": filtered_edges,
+            "entity_categories": entity_categories,
+            "relationship_categories": relationship_categories,
+            "relationship_types": relationship_types,
+            "search_applied": search,
+            "filters_applied": {
+                "entity_type": entity_type,
+                "relationship_type": relationship_type,
+                "evidence_class": evidence_class,
+                "limit": limit,
+            },
         }
 
 

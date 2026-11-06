@@ -21,6 +21,8 @@ class BoundaryEdge(BaseModel):
     target_community: str
     is_cross_tier: bool
     risk_level: str
+    source_node: Optional[str] = None
+    target_node: Optional[str] = None
 
 
 class CommunityCluster(BaseModel):
@@ -31,6 +33,8 @@ class CommunityCluster(BaseModel):
     node_ids: List[str]
     critical_asset_count: int
     internal_edge_count: int
+    node_count: Optional[int] = None
+    sample_nodes: Optional[List[str]] = None
 
 
 class CommunityDetectionResult(BaseModel):
@@ -40,16 +44,24 @@ class CommunityDetectionResult(BaseModel):
     cross_boundary_edges_count: int
     modularity_score: float
     execution_time_ms: float
+    total_nodes: Optional[int] = None
+    modularity_q: Optional[float] = None
+    cross_boundary_transitions: Optional[List[BoundaryEdge]] = None
     disclaimer: str = (
         "Algorithmic graph partition for lateral movement hunting; "
         "cross-boundary transitions represent key network tier crossings."
     )
 
 
-def detect_security_communities(client=None) -> CommunityDetectionResult:
+def detect_security_communities(
+    client=None,
+    community_id: Optional[str] = None,
+    risk_level: Optional[str] = None,
+) -> CommunityDetectionResult:
     """
     Performs modularity-based security enclave community detection across the enterprise graph.
     Identifies intra-cluster cohesion and surfaces cross-cluster boundary pivot edges.
+    Supports optional filtering by community_id and risk_level.
     """
     start_time = time.perf_counter()
     neo4j_client = client or get_graphops_client()
@@ -179,6 +191,8 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
                 BoundaryEdge(
                     source_id=s,
                     target_id=t,
+                    source_node=s,
+                    target_node=t,
                     relationship_type=rel,
                     source_community=c_src,
                     target_community=c_dst,
@@ -224,13 +238,16 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
             "risk": "MEDIUM",
         })
         crit_count = sum(1 for nid in members if node_map.get(nid, {}).get("critical"))
+        sorted_members = sorted(members)
         clusters.append(
             CommunityCluster(
                 community_id=cid,
                 name=meta["name"],
                 description=meta["desc"],
                 risk_level=meta["risk"],
-                node_ids=sorted(members),
+                node_ids=sorted_members,
+                node_count=len(sorted_members),
+                sample_nodes=sorted_members[:5],
                 critical_asset_count=crit_count,
                 internal_edge_count=internal_edge_counts.get(cid, 0),
             )
@@ -240,6 +257,18 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
     order = {"COMM-CROWN-JEWELS": 0, "COMM-IAM": 1, "COMM-DMZ-GATEWAYS": 2, "COMM-USER-ENDPOINTS": 3, "COMM-GENERAL-ASSETS": 4}
     clusters.sort(key=lambda c: order.get(c.community_id, 99))
 
+    # Apply optional filtering
+    filtered_clusters = clusters
+    filtered_boundaries = boundary_edges
+    if community_id:
+        c_filter = community_id.strip().upper()
+        filtered_clusters = [c for c in filtered_clusters if c.community_id.upper() == c_filter]
+        filtered_boundaries = [b for b in filtered_boundaries if b.source_community.upper() == c_filter or b.target_community.upper() == c_filter]
+    if risk_level:
+        r_filter = risk_level.strip().upper()
+        filtered_clusters = [c for c in filtered_clusters if c.risk_level.upper() == r_filter]
+        filtered_boundaries = [b for b in filtered_boundaries if b.risk_level.upper() == r_filter]
+
     # Calculate Newman-Girvan modularity metric (approximate Q)
     m = max(len(edges_data), 1)
     q_score = max(0.42, min(0.85, 1.0 - (len(boundary_edges) / (2.0 * m))))
@@ -247,10 +276,13 @@ def detect_security_communities(client=None) -> CommunityDetectionResult:
     exec_time = round((time.perf_counter() - start_time) * 1000, 2)
 
     return CommunityDetectionResult(
-        communities=clusters,
-        boundary_edges=boundary_edges,
-        total_communities=len(clusters),
-        cross_boundary_edges_count=len(boundary_edges),
+        communities=filtered_clusters,
+        boundary_edges=filtered_boundaries,
+        total_communities=len(filtered_clusters),
+        cross_boundary_edges_count=len(filtered_boundaries),
         modularity_score=round(q_score, 3),
+        modularity_q=round(q_score, 3),
+        total_nodes=len(node_map),
+        cross_boundary_transitions=filtered_boundaries,
         execution_time_ms=exec_time,
     )

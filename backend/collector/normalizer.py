@@ -57,12 +57,14 @@ _CRITICAL_SEVERITY_IDS = {4698, 4720, 4726}
 _REDACT_PATTERNS = [
     re.compile(r"(-[-]?password[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(/password[=:\s]+)([^\s]+)", re.IGNORECASE),
+    re.compile(r"(\bpassword[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(-[-]?p[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(/p[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(Bearer\s+)([A-Za-z0-9_\-\.]+)", re.IGNORECASE),
     re.compile(r"(api[_-]?key[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(token[=:\s]+)([^\s]+)", re.IGNORECASE),
     re.compile(r"(secret[=:\s]+)([^\s]+)", re.IGNORECASE),
+    re.compile(r"(net\s+user\s+[^\s]+\s+)([^\s]+)", re.IGNORECASE),
 ]
 
 
@@ -362,11 +364,12 @@ class WindowsEventNormalizer:
     for source attribution in the graph.
     """
 
+    @classmethod
     def normalize(
-        self,
+        cls,
         raw: Dict[str, Any],
         collector_id: str,
-        device_node_id: str,
+        device_node_id: Optional[str] = None,
     ) -> SecurityEventEnvelope:
         """
         Normalises one raw Windows event record.
@@ -376,10 +379,12 @@ class WindowsEventNormalizer:
         if not isinstance(raw, dict):
             raise TypeError(f"Expected event record to be a dict, got {type(raw).__name__}")
 
-        event_id_number = int(raw.get("event_id_number") or raw.get("EventID") or 0)
+        event_id_number = int(raw.get("event_id_number") or raw.get("EventID") or raw.get("event_id") or 0)
         source_computer = _safe_str(
-            raw.get("source_computer") or raw.get("Computer") or raw.get("hostname") or "unknown"
+            raw.get("source_computer") or raw.get("Computer") or raw.get("computer") or raw.get("hostname") or "unknown"
         )
+        if not device_node_id:
+            device_node_id = _canonical_device_id(source_computer)
         time_created = raw.get("time_created") or raw.get("TimeCreated") or raw.get("timestamp")
         channel = _safe_str(raw.get("channel") or raw.get("Channel") or "Security")
         source_event_record_id = raw.get("source_event_record_id") or raw.get("EventRecordID") or uuid.uuid4().hex
@@ -432,6 +437,15 @@ class WindowsEventNormalizer:
             source_event_record_id, source_computer, event_id_number, occurred_at
         )
 
+        # Distinguish synthetic test/simulation events from genuine Windows telemetry
+        is_synthetic = bool(
+            raw.get("is_synthetic")
+            or event_data.get("is_synthetic")
+            or str(channel).lower() in ("synthetic", "simulation", "mock", "test")
+            or str(collector_id).lower().startswith(("synth-", "sim-", "mock-", "test-"))
+        )
+        telemetry_source = "SYNTHETIC_SIMULATION" if is_synthetic else "GENUINE_WINDOWS_TELEMETRY"
+
         evidence_metadata = {
             "collector_id": collector_id,
             "device_node_id": device_node_id,
@@ -440,10 +454,15 @@ class WindowsEventNormalizer:
             "windows_event_id": event_id_number,
             "source_event_record_id": str(source_event_record_id),
             "schema": "windows_security_event_v1",
+            "is_synthetic": is_synthetic,
+            "telemetry_source": telemetry_source,
         }
         if raw.get("impersonation_prevented"):
             evidence_metadata["impersonation_prevented"] = True
             evidence_metadata["claimed_source_computer"] = raw.get("claimed_source_computer")
+
+        payload["is_synthetic"] = is_synthetic
+        payload["telemetry_source"] = telemetry_source
 
         return SecurityEventEnvelope(
             event_id=stable_event_id,

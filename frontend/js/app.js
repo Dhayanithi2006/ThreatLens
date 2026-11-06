@@ -6572,6 +6572,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 <td>
 
+                  <a href="/api/v1/governance/reports/${encodeURIComponent(r.report_id)}/export?format=pdf" target="_blank" class="btn-table-action" style="margin-right: 4px;">PDF</a>
+
                   <a href="/api/v1/governance/reports/${encodeURIComponent(r.report_id)}/export?format=html" target="_blank" class="btn-table-action" style="margin-right: 4px;">HTML</a>
 
                   <a href="/api/v1/governance/reports/${encodeURIComponent(r.report_id)}/export?format=json" target="_blank" class="btn-table-action">JSON</a>
@@ -9727,6 +9729,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+
+    window.threatLensPivotToBlast = function(nodeId) {
+      if (!nodeId) return;
+      const nodeInput = document.getElementById("graphops-node-input");
+      if (nodeInput) nodeInput.value = nodeId;
+      setMode("blast");
+      if (typeof runBlastRadius === "function") {
+        runBlastRadius();
+      }
+    };
 
     function setMode(mode) {
 
@@ -12897,6 +12909,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
   async function bridgeCaseToGraph(caseId) {
+    state.currentCaseId = caseId;
 
 
 
@@ -15393,229 +15406,36 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
       if (selectedPreset === "case-linked") {
-
-
-
         const cId = state.currentCaseId || "MT-101";
-
-
-
         const resp = await fetch(`/api/v1/graphops/anomaly/evaluate-case/${encodeURIComponent(cId)}`);
-
-
-
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-
-
         result = await resp.json();
-
-
-
       } else {
-
-
-
-        // Fetch test suite benchmark
-
-
-
-        const resp = await fetch("/api/v1/graphops/anomaly/test-suite");
-
-
-
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-
-
-        const suite = await resp.json();
-
-
-
-        const matched = suite.results.find(r => r.sequence_id === selectedPreset) || suite.results[0];
-
-
-
-
-
-
-
-        // Format into full result
-
-
-
-        result = {
-
-
-
-          sequence_id: matched.sequence_id,
-
-
-
-          evaluated_entity_id: matched.sequence_id.includes("benign") ? "user:usr-101" : "device:dev-ws-101",
-
-
-
-          classification: matched.ground_truth_label,
-
-
-
-          anomaly_score: matched.anomaly_score,
-
-
-
-          baseline_confidence: matched.sequence_id.includes("new-legit") ? "LOW" : "HIGH",
-
-
-
-          history_completeness: matched.sequence_id.includes("new-legit") ? "INCOMPLETE" : "COMPLETE",
-
-
-
-          is_anomalous: ["POLICY_VIOLATION_UNAUTHORIZED", "SUSPICIOUS_ANOMALOUS"].includes(matched.ground_truth_label),
-
-
-
-          unexpected_relationships: [],
-
-
-
-          summary_explanation: matched.description
-
-
-
-        };
-
-
-
-
-
-
-
-        if (matched.ground_truth_label === "SUSPICIOUS_ANOMALOUS") {
-
-
-
-          result.unexpected_relationships.push({
-
-
-
-            step_index: 0,
-
-
-
-            source_id: "device:dev-ws-101",
-
-
-
-            relationship_type: "POTENTIAL_EXPLOIT",
-
-
-
-            target_id: "server:srv-app-01",
-
-
-
-            deviation_type: "EXPLOIT_PRECONDITION",
-
-
-
-            baseline_reference: "EXPLOIT_PRECONDITION_POLICY: Traversal leverages vulnerability (CVE-2024-21413)",
-
-
-
-            explanation: "Traversed via unpatched exploit precondition (CVE-2024-21413) to bypass authentication controls."
-
-
-
-          });
-
-
-
-        } else if (matched.ground_truth_label === "POLICY_VIOLATION_UNAUTHORIZED") {
-
-
-
-          result.unexpected_relationships.push({
-
-
-
-            step_index: 1,
-
-
-
-            source_id: "device:dev-ws-101",
-
-
-
-            relationship_type: "OBSERVED_CONNECTION",
-
-
-
-            target_id: selectedPreset.includes("02") ? "server:srv-dc-01" : "server:srv-db-01",
-
-
-
-            deviation_type: "TIER_BYPASS",
-
-
-
-            baseline_reference: "BASELINE_TIERING_POLICY: Direct Client-to-Database bypass prohibited",
-
-
-
-            explanation: "Workstation attempted direct tier connection, bypassing the application gateway."
-
-
-
-          });
-
-
-
-        } else if (matched.ground_truth_label === "UNOBSERVED_NEW_LEGITIMATE") {
-
-
-
-          result.unexpected_relationships.push({
-
-
-
-            step_index: 1,
-
-
-
-            source_id: "device:dev-ws-104",
-
-
-
-            relationship_type: "OBSERVED_CONNECTION",
-
-
-
-            target_id: "server:srv-app-01",
-
-
-
-            deviation_type: "UNOBSERVED_RELATIONSHIP",
-
-
-
-            baseline_reference: "PEER_GROUP_BASELINE: Novel connection conforms to department role",
-
-
-
-            explanation: "Newly observed connection conforms to standard Finance enterprise profile."
-
-
-
-          });
-
-
-
+        try {
+          const resp = await fetch(`/api/v1/graphops/anomaly/evaluate-preset/${encodeURIComponent(selectedPreset)}`);
+          if (resp.ok) {
+            result = await resp.json();
+          } else {
+            throw new Error(`HTTP ${resp.status}`);
+          }
+        } catch (presetErr) {
+          console.warn("Falling back to test-suite benchmark:", presetErr);
+          const resp = await fetch("/api/v1/graphops/anomaly/test-suite");
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const suite = await resp.json();
+          const matched = suite.results.find(r => r.sequence_id === selectedPreset) || suite.results[0];
+          result = {
+            sequence_id: matched.sequence_id,
+            evaluated_entity_id: matched.sequence_id.includes("benign") ? "user:usr-101" : "device:dev-ws-101",
+            classification: matched.ground_truth_label,
+            anomaly_score: matched.anomaly_score,
+            baseline_confidence: matched.sequence_id.includes("new-legit") ? "LOW" : "HIGH",
+            history_completeness: matched.sequence_id.includes("new-legit") ? "INCOMPLETE" : "COMPLETE",
+            is_anomalous: ["POLICY_VIOLATION_UNAUTHORIZED", "SUSPICIOUS_ANOMALOUS"].includes(matched.ground_truth_label),
+            unexpected_relationships: [],
+            summary_explanation: matched.description
+          };
         }
-
-
-
       }
 
 
@@ -15836,7 +15656,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-              <td><span style="font-family: var(--font-mono); font-size: 0.75rem; color: #7dd3fc;">${escapeHtml(u.source_id)} -[${escapeHtml(u.relationship_type)}]-> ${escapeHtml(u.target_id)}</span></td>
+              <td><span style="font-family: var(--font-mono); font-size: 0.75rem;"><a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(u.source_id)}')" title="Pivot to Blast Radius in Module 3" style="color: #7dd3fc; text-decoration: underline;">${escapeHtml(u.source_id)}</a> -[${escapeHtml(u.relationship_type)}]-> <a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(u.target_id)}')" title="Pivot to Blast Radius in Module 3" style="color: #f87171; text-decoration: underline;">${escapeHtml(u.target_id)}</a></span></td>
 
 
 
@@ -16212,294 +16032,87 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+      const modQ = Number(data.modularity_q !== undefined ? data.modularity_q : (data.modularity_score || 0));
+      const crossTransitions = data.cross_boundary_transitions || data.boundary_edges || [];
+      const totalNodes = data.total_nodes || (data.communities ? data.communities.reduce((a, c) => a + (c.node_count || (c.node_ids ? c.node_ids.length : 0)), 0) : 0);
+
       if (modBadge) {
-
-
-
-        modBadge.textContent = `Modularity Q: ${data.modularity_q.toFixed(3)}`;
-
-
-
+        modBadge.textContent = `Modularity Q: ${modQ.toFixed(3)}`;
       }
-
-
-
-
-
-
 
       if (assessText) {
-
-
-
         assessText.innerHTML = `
-
-
-
-          <strong>Community Partitioning Complete:</strong> Discovered ${data.total_communities} security enclaves across ${data.total_nodes} entities with modularity score <strong>Q = ${data.modularity_q.toFixed(3)}</strong>.<br>
-
-
-
-          <span style="font-size: 0.78rem; color: #a78bfa;">Identified ${data.cross_boundary_transitions.length} cross-enclave boundary transitions requiring zero-trust least-privilege verification.</span>
-
-
-
+          <strong>Community Partitioning Complete:</strong> Discovered ${data.total_communities || (data.communities ? data.communities.length : 0)} security enclaves across ${totalNodes} entities with modularity score <strong>Q = ${modQ.toFixed(3)}</strong>.<br>
+          <span style="font-size: 0.78rem; color: #a78bfa;">Identified ${crossTransitions.length} cross-enclave boundary transitions requiring zero-trust least-privilege verification.</span>
         `;
-
-
-
       }
-
-
-
-
-
-
 
       // Enclave colors palette
-
-
-
       const enclaveColors = {
-
-
-
         "COMM-CROWN-JEWELS": { color: "#ef4444", bg: "rgba(239, 68, 68, 0.12)", border: "rgba(239, 68, 68, 0.4)", name: "Critical Asset Vault" },
-
-
-
         "COMM-IAM": { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.12)", border: "rgba(245, 158, 11, 0.4)", name: "Identity & Access Hub" },
-
-
-
         "COMM-DMZ-GATEWAYS": { color: "#38bdf8", bg: "rgba(56, 189, 248, 0.12)", border: "rgba(56, 189, 248, 0.4)", name: "Perimeter & DMZ Tier" },
-
-
-
         "COMM-USER-ENDPOINTS": { color: "#10b981", bg: "rgba(16, 185, 129, 0.12)", border: "rgba(16, 185, 129, 0.4)", name: "Workstation Zone" },
-
-
-
         "COMM-GENERAL-ASSETS": { color: "#94a3b8", bg: "rgba(148, 163, 184, 0.12)", border: "rgba(148, 163, 184, 0.4)", name: "General Infrastructure" }
-
-
-
       };
 
-
-
-
-
-
-
       // Populate Cards Grid
-
-
-
       if (gridEl) {
-
-
-
-        gridEl.innerHTML = data.communities.map(comm => {
-
-
-
+        gridEl.innerHTML = (data.communities || []).map(comm => {
           const meta = enclaveColors[comm.community_id] || { color: "#c084fc", bg: "rgba(192, 132, 252, 0.12)", border: "rgba(192, 132, 252, 0.4)", name: comm.name };
-
-
-
+          const ncount = comm.node_count !== undefined ? comm.node_count : (comm.node_ids ? comm.node_ids.length : 0);
+          const snodes = comm.sample_nodes || comm.node_ids || [];
           return `
-
-
-
             <div class="enclave-card" style="background: ${meta.bg}; border-color: ${meta.border};">
-
-
-
               <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
-
-
-
                 <span style="font-size: 0.72rem; font-weight: 700; color: ${meta.color}; text-transform: uppercase;">${escapeHtml(comm.community_id)}</span>
-
-
-
-                <span class="status-badge" style="font-size: 0.7rem; border-color: ${meta.border}; color: ${meta.color};">${comm.node_count} Nodes</span>
-
-
-
+                <span class="status-badge" style="font-size: 0.7rem; border-color: ${meta.border}; color: ${meta.color};">${ncount} Nodes</span>
               </div>
-
-
-
               <div style="font-size: 0.9rem; font-weight: 700; color: #f8fafc; margin-bottom: 4px;">${escapeHtml(meta.name)}</div>
-
-
-
               <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">${escapeHtml(comm.description)}</div>
-
-
-
               <div style="margin-top: 8px; font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">
-
-
-
-                ${comm.sample_nodes.slice(0, 3).map(n => escapeHtml(n)).join(", ")}
-
-
-
+                ${snodes.slice(0, 3).map(n => `<a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(n)}')" style="color: #7dd3fc; text-decoration: underline;" title="Analyze Blast Radius in Module 3">${escapeHtml(n)}</a>`).join(", ")}
               </div>
-
-
-
             </div>
-
-
-
           `;
-
-
-
         }).join("");
-
-
-
       }
-
-
-
-
-
-
 
       // Populate Cross-Boundary Table
-
-
-
-      if (crossBadge) crossBadge.textContent = `${data.cross_boundary_transitions.length} Transitions`;
-
-
-
+      if (crossBadge) crossBadge.textContent = `${crossTransitions.length} Transitions`;
       if (tbodyCross) {
-
-
-
-        if (data.cross_boundary_transitions.length === 0) {
-
-
-
+        if (crossTransitions.length === 0) {
           tbodyCross.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No cross-boundary transitions detected.</td></tr>`;
-
-
-
         } else {
-
-
-
-          tbodyCross.innerHTML = data.cross_boundary_transitions.map(t => {
-
-
-
-            const isHighRisk = t.target_community === "COMM-CROWN-JEWELS" || t.target_community === "COMM-IAM";
-
-
-
+          tbodyCross.innerHTML = crossTransitions.map(t => {
+            const isHighRisk = t.target_community === "COMM-CROWN-JEWELS" || t.target_community === "COMM-IAM" || t.risk_level === "CRITICAL";
             const sevBadge = isHighRisk 
-
-
-
               ? `<span class="status-badge status-malicious" style="font-size: 0.7rem;">HIGH (Lateral Ingress)</span>`
-
-
-
               : `<span class="status-badge status-suspicious" style="font-size: 0.7rem;">MEDIUM (Cross-Zone)</span>`;
-
-
-
+            const sNode = t.source_node || t.source_id;
+            const tNode = t.target_node || t.target_id;
             return `
-
-
-
               <tr>
-
-
-
                 <td><strong style="color: #cbd5e1; font-size: 0.75rem;">${escapeHtml(t.source_community)}</strong></td>
-
-
-
-                <td><code style="color: #7dd3fc; font-size: 0.72rem;">${escapeHtml(t.source_node)}</code></td>
-
-
-
+                <td><a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(sNode)}')" title="Pivot to Blast Radius" style="color: #7dd3fc; font-family: var(--font-mono); font-size: 0.72rem; text-decoration: underline;">${escapeHtml(sNode)}</a></td>
                 <td><span class="status-badge" style="font-size: 0.68rem; font-family: var(--font-mono);">${escapeHtml(t.relationship_type)}</span></td>
-
-
-
-                <td><code style="color: #f87171; font-size: 0.72rem;">${escapeHtml(t.target_node)}</code></td>
-
-
-
+                <td><a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(tNode)}')" title="Pivot to Blast Radius" style="color: #f87171; font-family: var(--font-mono); font-size: 0.72rem; text-decoration: underline;">${escapeHtml(tNode)}</a></td>
                 <td><strong style="color: ${isHighRisk ? '#f87171' : '#fbbf24'}; font-size: 0.75rem;">${escapeHtml(t.target_community)}</strong></td>
-
-
-
                 <td>${sevBadge}</td>
-
-
-
               </tr>
-
-
-
             `;
-
-
-
           }).join("");
-
-
-
         }
-
-
-
       }
 
-
-
-
-
-
-
       // Visualize on Cytoscape Canvas with community colors
-
-
-
       const nodeCommunityMap = {};
-
-
-
-      data.communities.forEach(c => {
-
-
-
+      (data.communities || []).forEach(c => {
         const meta = enclaveColors[c.community_id] || { color: "#c084fc" };
-
-
-
-        c.sample_nodes.forEach(nid => {
-
-
-
+        const snodes = c.sample_nodes || c.node_ids || [];
+        snodes.forEach(nid => {
           nodeCommunityMap[nid] = meta.color;
-
-
-
         });
-
-
-
       });
 
 
@@ -18836,11 +18449,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
-                <td><code style="color: #cbd5e1; font-size: 0.75rem;">${escapeHtml(item.source_id)}</code> <span style="font-size: 0.7rem; color: var(--text-muted);">(${escapeHtml(item.source_label || "Entity")})</span></td>
-
-
-
-                <td><code style="color: #7dd3fc; font-size: 0.75rem;">${escapeHtml(item.target_id)}</code></td>
+                <td><a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(item.source_id)}')" title="Pivot to Blast Radius in Module 3" style="color: #cbd5e1; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(item.source_id)}</a> <span style="font-size: 0.7rem; color: var(--text-muted);">(${escapeHtml(item.source_label || "Entity")})</span></td>
+                <td><a href="javascript:void(0)" onclick="window.threatLensPivotToBlast('${escapeHtml(item.target_id)}')" title="Pivot to Blast Radius in Module 3" style="color: #7dd3fc; font-size: 0.75rem; text-decoration: underline;">${escapeHtml(item.target_id)}</a></td>
 
 
 
@@ -22591,6 +22201,60 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+
+    const btnSaveSimToCase = document.getElementById("btn-save-simulation-to-case");
+    if (btnSaveSimToCase && !btnSaveSimToCase._bound) {
+      btnSaveSimToCase._bound = true;
+      btnSaveSimToCase.addEventListener("click", async () => {
+        const simRes = state.graphOpsSimResult;
+        if (!simRes) {
+          alert("Please run a containment simulation first before saving findings.");
+          return;
+        }
+        const defaultCase = state.currentCaseId || "MT-101";
+        const targetCaseId = prompt("Enter target Investigation Case ID to record simulation finding:", defaultCase);
+        if (!targetCaseId) return;
+
+        btnSaveSimToCase.disabled = true;
+        btnSaveSimToCase.textContent = "Saving to Case...";
+        try {
+          const payload = {
+            case_id: targetCaseId.trim(),
+            simulation_id: simRes.simulation_id || "SIM-MANUAL",
+            simulation_type: "WHAT_IF_CONTAINMENT",
+            entry_node_id: simRes.entry_node_id || (document.getElementById("graphops-node-input") ? document.getElementById("graphops-node-input").value : "device:dev-ws-101"),
+            interventions: simRes.proposed_interventions || [{ action: "ISOLATE_NODE", node_id: "server:srv-app-01" }],
+            efficiency_pct: simRes.containment_efficiency_pct || 0.0,
+            verdict: simRes.analyst_verdict || "Simulation completed",
+            residual_assets: simRes.residual_exposed_assets || [],
+            safety_disclaimer: simRes.safety_disclaimer || "SIMULATION ONLY: In-memory evaluation. No live configuration modified.",
+            author: "soc_analyst@threatlens.io"
+          };
+          const resp = await fetch(`/api/v1/graphops/cases/${encodeURIComponent(targetCaseId.trim())}/save-simulation`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert("Failed to save simulation to case: " + (err.detail || resp.statusText));
+            return;
+          }
+          const feedback = document.getElementById("save-simulation-feedback");
+          if (feedback) {
+            feedback.style.display = "inline";
+            feedback.textContent = `Saved to Case #${escapeHtml(targetCaseId.trim())}!`;
+            setTimeout(() => { feedback.style.display = "none"; }, 4000);
+          }
+          alert(`Successfully persisted simulation finding '${payload.simulation_id}' to Case #${targetCaseId.trim()} timeline and notes.`);
+        } catch (e) {
+          alert("Error saving simulation finding: " + e.message);
+        } finally {
+          btnSaveSimToCase.disabled = false;
+          btnSaveSimToCase.textContent = "Save Simulation to Investigation Case";
+        }
+      });
+    }
 
     if (btnContainmentProof && btnJson) {
 
