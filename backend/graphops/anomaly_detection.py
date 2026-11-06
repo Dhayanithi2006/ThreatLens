@@ -207,7 +207,6 @@ class AccessAnomalyDetector:
         step_score: int,
         affected_entity: Optional[str] = None,
         sequence_id: Optional[str] = None,
-        case_id: Optional[str] = None,
     ) -> UnexpectedRelationship:
         """Constructs an explainable, structured UnexpectedRelationship finding."""
         s = step.source_id.lower().strip()
@@ -233,16 +232,12 @@ class AccessAnomalyDetector:
 
         now_iso = datetime.now(timezone.utc).isoformat()
         seq_str = sequence_id or f"step-{step.step_index}"
-        primary_entity = affected_entity or step.target_id
 
         return UnexpectedRelationship(
             finding_id=f"ANOM-{rule_id}-{step.step_index:02d}",
             rule_id=rule_id,
             severity=severity,
-            affected_entity=primary_entity,
-            case_id=case_id,
-            blast_radius_pivot_url=f"/api/v1/graphops/blast-radius?start_node_id={primary_entity}&max_hops=2",
-            graph_pivot_url=f"/api/v1/graphops/search?query={primary_entity}",
+            affected_entity=affected_entity or step.target_id,
             step_index=step.step_index,
             source_id=step.source_id,
             relationship_type=step.relationship_type,
@@ -264,7 +259,6 @@ class AccessAnomalyDetector:
         evaluated_dept: str,
         is_compromised_origin: bool = False,
         sequence_id: Optional[str] = None,
-        case_id: Optional[str] = None,
     ) -> Optional[UnexpectedRelationship]:
         """
         Evaluates a single traversal step against documented baseline policies.
@@ -289,7 +283,6 @@ class AccessAnomalyDetector:
                 recommended_investigation=f"Inspect EDR telemetry and patch management logs for {step.target_id}.",
                 step_score=90,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # 2. Exact match in historical baseline (for non-exploit edges)
@@ -308,7 +301,6 @@ class AccessAnomalyDetector:
                 recommended_investigation=f"Isolate originating host {step.source_id} and review authentication sessions to {step.target_id}.",
                 step_score=85,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # 4. Missing Authorization for Server Login / Credential Hijack
@@ -325,7 +317,6 @@ class AccessAnomalyDetector:
                     recommended_investigation=f"Revoke active Kerberos tickets for {hijacked} and inspect memory artifacts on {step.source_id}.",
                     step_score=88,
                     sequence_id=sequence_id,
-                    case_id=case_id,
                 )
             if (s, t) not in self._permissions_cache:
                 return self._create_finding(
@@ -338,7 +329,6 @@ class AccessAnomalyDetector:
                     recommended_investigation=f"Review Active Directory role assignments and session audit logs for {step.source_id}.",
                     step_score=50,
                     sequence_id=sequence_id,
-                    case_id=case_id,
                 )
 
         # 5. Network Tiering Violations
@@ -354,7 +344,6 @@ class AccessAnomalyDetector:
                 recommended_investigation=f"Verify network firewall segmentation between workstation subnet and {step.target_id}.",
                 step_score=55,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # B) Client Workstation directly to Domain Controller (RDP/RPC)
@@ -369,7 +358,6 @@ class AccessAnomalyDetector:
                 recommended_investigation=f"Verify administrative jump-box compliance and check for unauthorized RDP/RPC sessions on {step.target_id}.",
                 step_score=60,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # C) Workstation-to-Workstation Lateral Peer Connection (Port 445 SMB)
@@ -384,7 +372,6 @@ class AccessAnomalyDetector:
                 recommended_investigation=f"Inspect workstation network logs for pass-the-hash or lateral movement indicators between {step.source_id} and {step.target_id}.",
                 step_score=50,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # 6. Novel Legitimate Connection (conforming to peer group & tiering)
@@ -404,7 +391,6 @@ class AccessAnomalyDetector:
                 recommended_investigation="Update baseline profile to incorporate legitimate newly provisioned activity. No containment required.",
                 step_score=20,
                 sequence_id=sequence_id,
-                case_id=case_id,
             )
 
         # 7. Default unobserved edge
@@ -418,7 +404,6 @@ class AccessAnomalyDetector:
             recommended_investigation="Review business justification with identity owner and asset administrator.",
             step_score=30,
             sequence_id=sequence_id,
-            case_id=case_id,
         )
 
 
@@ -431,10 +416,9 @@ class AccessAnomalyDetector:
         history_comp, baseline_conf, evaluated_dept = self._assess_cold_start(entity_id)
 
         has_confirmed_compromise = request.client_context.get("has_confirmed_compromise", False) or request.client_context.get("is_compromised", False)
-        case_id = request.client_context.get("case_id")
         is_compromised_origin = (
             has_confirmed_compromise
-            and ("dev-ws-101" in entity_id.lower() or case_id == "MT-101")
+            and ("dev-ws-101" in entity_id.lower() or request.client_context.get("case_id") == "MT-101")
         )
 
         unexpected_list: List[UnexpectedRelationship] = []
@@ -446,7 +430,6 @@ class AccessAnomalyDetector:
                 evaluated_dept=evaluated_dept,
                 is_compromised_origin=is_compromised_origin,
                 sequence_id=request.sequence_id,
-                case_id=case_id,
             )
             if finding:
                 unexpected_list.append(finding)
@@ -625,7 +608,7 @@ class AccessAnomalyDetector:
         # Find mapped device
         mapped_device_id = None
         for m in bridge_res.mapped_entities:
-            if m.evidence_type == "ASSIGNED_DEVICE" or m.node_label == NodeLabel.DEVICE or (m.mapped_node_id and m.mapped_node_id.startswith("device:")):
+            if m.node_label == NodeLabel.DEVICE:
                 mapped_device_id = m.mapped_node_id
                 break
 
@@ -656,7 +639,7 @@ class AccessAnomalyDetector:
 
         req = AccessSequenceRequest(
             sequence_id=f"case-seq-{case_id.lower()}",
-            evaluated_entity_id=mapped_device_id or f"case:{case_id}",
+            evaluated_entity_id=mapped_device_id or user_id,
             steps=steps,
             include_explanations=True,
             client_context={

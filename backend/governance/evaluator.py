@@ -9,7 +9,6 @@ Absence of telemetry or missing context resolves to NEEDS_REVIEW or NOT_EVALUATE
 with explicit data limitations recorded.
 """
 
-import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -21,50 +20,6 @@ from backend.governance.schema import (
     OrganizationPolicy,
     PolicyEvaluation,
 )
-
-_evaluation_lock = threading.Lock()
-_evaluation_history: List[Dict[str, Any]] = []
-
-
-def record_evaluation_run(
-    evaluations: List[PolicyEvaluation],
-    context_summary: Optional[Dict[str, Any]] = None,
-    actor_id: str = "system",
-) -> Dict[str, Any]:
-    """Records an evaluation execution batch in thread-safe history."""
-    run_id = f"eval-run-{uuid.uuid4().hex[:8]}"
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "run_id": run_id,
-        "timestamp": now_iso,
-        "actor_id": actor_id,
-        "total_evaluated": len(evaluations),
-        "passed": sum(1 for e in evaluations if e.status == EvaluationStatus.PASS),
-        "failed": sum(1 for e in evaluations if e.status == EvaluationStatus.FAIL),
-        "partial": sum(1 for e in evaluations if e.status == EvaluationStatus.PARTIAL),
-        "needs_review": sum(1 for e in evaluations if e.status in (EvaluationStatus.NEEDS_REVIEW, EvaluationStatus.INSUFFICIENT_EVIDENCE, EvaluationStatus.NOT_ASSESSED)),
-        "not_applicable": sum(1 for e in evaluations if e.status == EvaluationStatus.NOT_APPLICABLE),
-        "context_summary": context_summary or {},
-        "evaluations": [e.model_dump() for e in evaluations],
-    }
-    with _evaluation_lock:
-        _evaluation_history.append(record)
-    return record
-
-
-def list_evaluation_history(limit: int = 50) -> List[Dict[str, Any]]:
-    """Returns past policy evaluation execution records in reverse chronological order."""
-    with _evaluation_lock:
-        history = list(_evaluation_history)
-    history.reverse()
-    return history[:limit]
-
-
-def reset_evaluation_history() -> None:
-    """Resets evaluation history log (primarily for testing isolation)."""
-    with _evaluation_lock:
-        _evaluation_history.clear()
-
 
 
 def evaluate_policy(
@@ -130,11 +85,6 @@ def evaluate_policy(
                 "No graph traversal, blast radius, or telemetry evidence provided in assessment payload.",
                 "Assessment requires active graph finding context."
             ],
-            missing_evidence=[
-                "No graph traversal paths or network edge transitions supplied",
-                "Absence of active EDR endpoint status and authentication telemetry",
-                "Absence of verified SIEM log events or threat indicators"
-            ],
             recommended_remediation="Execute a GraphOps query (e.g. blast radius or attack path analysis) and attach finding context for evaluation.",
         )
 
@@ -183,7 +133,6 @@ def _eval_pol_iam_01(
             reasoning="Graph topology data lacked explicit path or edge transitions between endpoints and databases.",
             timestamp=now,
             data_limitations=["No attack paths or graph edge transitions provided in finding context."],
-            missing_evidence=["Attack path traversal data and graph edge transitions connecting endpoints to Crown Jewels."],
             recommended_remediation="Run attack path analysis from workstation node to Crown Jewel database to produce traversal evidence.",
         )
     
@@ -277,7 +226,6 @@ def _eval_pol_iam_02(
             reasoning="No identity or logon anomaly evidence supplied for service account evaluation.",
             timestamp=now,
             data_limitations=["Missing user identity telemetry and anomaly findings."],
-            missing_evidence=["Active Directory identity node records and Windows Event 4624 service logon telemetry."],
             recommended_remediation="Ingest identity logon telemetry or query GraphOps anomaly detection for anomalous service account activities.",
         )
         
@@ -357,7 +305,6 @@ def _eval_pol_exposure_01(
             reasoning="Blast radius analysis data absent from finding context.",
             timestamp=now,
             data_limitations=["No blast radius calculation supplied; compliance cannot be inferred without impact assessment."],
-            missing_evidence=["Blast radius neighborhood evaluation, reachability metrics, and Crown Jewel asset tags."],
             recommended_remediation="Run GraphOps blast radius simulation from compromised entity before policy evaluation.",
         )
         
@@ -447,7 +394,6 @@ def _eval_pol_vuln_01(
             reasoning="No vulnerability scan telemetry or attack path exploit preconditions provided.",
             timestamp=now,
             data_limitations=["CVE registry and asset vulnerability assessments were not included in context."],
-            missing_evidence=["Vulnerability management scanner reports (Nessus/Qualys) and POTENTIAL_EXPLOIT graph edges."],
             recommended_remediation="Correlate vulnerability management scan outputs with GraphOps topological paths.",
         )
         
@@ -524,7 +470,6 @@ def _eval_pol_log_01(
             reasoning="No edge transitions or telemetry streams provided to evaluate log audit coverage.",
             timestamp=now,
             data_limitations=["Telemetric log records absent from payload."],
-            missing_evidence=["Network connection flow logs (VPC/NetFlow) and Windows Filtering Platform 5156/5157 events."],
             recommended_remediation="Attach SIEM / EDR network connection logs to GraphOps findings.",
         )
         
@@ -616,7 +561,6 @@ def _eval_pol_inc_01(
             reasoning="No threat intelligence indicators, email forensic verdicts, or incident context provided.",
             timestamp=now,
             data_limitations=["Incident IOC stream empty."],
-            missing_evidence=["External threat intelligence indicator feeds and email gateway verdict analysis."],
             recommended_remediation="Link email forensic case or external threat intelligence indicator to investigation.",
         )
         
@@ -735,6 +679,4 @@ def evaluate_all_active_policies(
         res = evaluate_policy(pol.policy_id, finding_context)
         results.append(res)
         
-    context_keys = list(finding_context.keys()) if isinstance(finding_context, dict) else []
-    record_evaluation_run(results, context_summary={"scope": scope, "context_keys": context_keys})
     return results

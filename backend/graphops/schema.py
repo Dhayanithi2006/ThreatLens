@@ -14,7 +14,6 @@ class NodeLabel(str, Enum):
     DEVICE = "Device"
     SERVER = "Server"
     APPLICATION = "Application"
-    DATABASE = "Database"
     IP_ADDRESS = "IPAddress"
     VULNERABILITY = "Vulnerability"
     CRITICAL_ASSET = "CriticalAsset"
@@ -92,7 +91,6 @@ CANONICAL_PREFIXES: Dict[NodeLabel, str] = {
     NodeLabel.DEVICE: "device",
     NodeLabel.SERVER: "server",
     NodeLabel.APPLICATION: "app",
-    NodeLabel.DATABASE: "db",
     NodeLabel.IP_ADDRESS: "ip",
     NodeLabel.VULNERABILITY: "vuln",
     NodeLabel.CRITICAL_ASSET: "critical",
@@ -106,80 +104,29 @@ def canonicalize_node_id(label: NodeLabel, raw_id: str) -> str:
     Generates a deterministic canonical node identifier with prefix.
     Prevents ID collision across different entity types (e.g. server 'app01' vs application 'app01').
     """
-    if raw_id is None or not str(raw_id).strip():
-        raise ValueError(f"Entity ID cannot be empty for label {label.value}")
-
-    clean_id = str(raw_id).strip()
+    clean_id = raw_id.strip()
     prefix = CANONICAL_PREFIXES.get(label, "entity")
     
     # Handle critical asset prefix variations ('crit:' or 'critical:')
     if label == NodeLabel.CRITICAL_ASSET:
-        clean_lower = clean_id.lower()
-        while clean_lower.startswith("critical:") or clean_lower.startswith("crit:"):
-            if clean_lower.startswith("critical:"):
-                clean_id = clean_id[len("critical:"):].strip()
-            elif clean_lower.startswith("crit:"):
-                clean_id = clean_id[len("crit:"):].strip()
-            clean_lower = clean_id.lower()
-        suffix = clean_id
-        if not suffix:
-            raise ValueError(f"Entity ID cannot be empty for label {label.value}")
+        if clean_id.lower().startswith("critical:"):
+            suffix = clean_id[len("critical") + 1:].strip()
+        elif clean_id.lower().startswith("crit:"):
+            suffix = clean_id[len("crit") + 1:].strip()
+        else:
+            suffix = clean_id
         return f"critical:{suffix.lower()}"
 
-    # Handle database variations ('database:' or 'db:')
-    if label == NodeLabel.DATABASE:
-        clean_lower = clean_id.lower()
-        while clean_lower.startswith("database:") or clean_lower.startswith("db:"):
-            if clean_lower.startswith("database:"):
-                clean_id = clean_id[len("database:"):].strip()
-            elif clean_lower.startswith("db:"):
-                clean_id = clean_id[len("db:"):].strip()
-            clean_lower = clean_id.lower()
+    # If already prefixed properly, normalize suffix
+    if clean_id.startswith(f"{prefix}:"):
+        suffix = clean_id[len(prefix) + 1:].strip()
+    else:
         suffix = clean_id
-        if not suffix:
-            raise ValueError(f"Entity ID cannot be empty for label {label.value}")
-        return f"db:{suffix.lower()}"
-
-    # Handle application variations ('application:' or 'app:')
-    if label == NodeLabel.APPLICATION:
-        clean_lower = clean_id.lower()
-        while clean_lower.startswith("application:") or clean_lower.startswith("app:"):
-            if clean_lower.startswith("application:"):
-                clean_id = clean_id[len("application:"):].strip()
-            elif clean_lower.startswith("app:"):
-                clean_id = clean_id[len("app:"):].strip()
-            clean_lower = clean_id.lower()
-        suffix = clean_id
-        if not suffix:
-            raise ValueError(f"Entity ID cannot be empty for label {label.value}")
-        return f"app:{suffix.lower()}"
-
-    # Handle vulnerability variations ('vulnerability:' or 'vuln:')
-    if label == NodeLabel.VULNERABILITY:
-        clean_lower = clean_id.lower()
-        while clean_lower.startswith("vulnerability:") or clean_lower.startswith("vuln:"):
-            if clean_lower.startswith("vulnerability:"):
-                clean_id = clean_id[len("vulnerability:"):].strip()
-            elif clean_lower.startswith("vuln:"):
-                clean_id = clean_id[len("vuln:"):].strip()
-            clean_lower = clean_id.lower()
-        suffix = clean_id
-        if not suffix:
-            raise ValueError(f"Entity ID cannot be empty for label {label.value}")
-        return f"vuln:{suffix.upper()}"
-
-    # Strip existing prefix case-insensitively and repeatedly to prevent duplicate prefixes (e.g. USER:user:101)
-    clean_lower = clean_id.lower()
-    while clean_lower.startswith(f"{prefix}:"):
-        clean_id = clean_id[len(prefix) + 1:].strip()
-        clean_lower = clean_id.lower()
-
-    suffix = clean_id
-    if not suffix:
-        raise ValueError(f"Entity ID cannot be empty for label {label.value}")
 
     # Canonical case normalization
-    if label == NodeLabel.IP_ADDRESS:
+    if label == NodeLabel.VULNERABILITY:
+        suffix = suffix.upper()  # CVE-2024-21413
+    elif label == NodeLabel.IP_ADDRESS:
         suffix = suffix.strip()  # preserve exact IP string
     else:
         suffix = suffix.lower()
@@ -189,14 +136,7 @@ def canonicalize_node_id(label: NodeLabel, raw_id: str) -> str:
 
 # Inverse mapping from prefix string to NodeLabel
 PREFIX_TO_LABEL: Dict[str, NodeLabel] = {v: k for k, v in CANONICAL_PREFIXES.items()}
-PREFIX_TO_LABEL["db"] = NodeLabel.DATABASE
-PREFIX_TO_LABEL["database"] = NodeLabel.DATABASE
 PREFIX_TO_LABEL["crit"] = NodeLabel.CRITICAL_ASSET
-PREFIX_TO_LABEL["application"] = NodeLabel.APPLICATION
-PREFIX_TO_LABEL["vulnerability"] = NodeLabel.VULNERABILITY
-PREFIX_TO_LABEL["event"] = NodeLabel.SECURITY_EVENT
-PREFIX_TO_LABEL["security_event"] = NodeLabel.SECURITY_EVENT
-PREFIX_TO_LABEL["email_account"] = NodeLabel.EMAIL_ACCOUNT
 
 
 def get_node_label_from_id(node_id: str) -> Optional[NodeLabel]:
@@ -225,51 +165,51 @@ VALID_RELATIONSHIP_ENDPOINTS: Dict[RelationshipType, Tuple[Set[NodeLabel], Set[N
     ),
     RelationshipType.AUTHENTICATED_TO: (
         {NodeLabel.USER, NodeLabel.EMAIL_ACCOUNT},
-        {NodeLabel.SERVER, NodeLabel.DEVICE, NodeLabel.APPLICATION, NodeLabel.DATABASE}
+        {NodeLabel.SERVER, NodeLabel.DEVICE, NodeLabel.APPLICATION}
     ),
     RelationshipType.CAN_REACH: (
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS, NodeLabel.DATABASE},
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS, NodeLabel.CRITICAL_ASSET, NodeLabel.DATABASE}
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS},
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS, NodeLabel.CRITICAL_ASSET}
     ),
     RelationshipType.CONNECTS_TO: (
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.IP_ADDRESS, NodeLabel.DATABASE},
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.IP_ADDRESS, NodeLabel.DATABASE}
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.IP_ADDRESS},
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.IP_ADDRESS}
     ),
     RelationshipType.OBSERVED_CONNECTION: (
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.DATABASE},
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS, NodeLabel.DATABASE}
+        {NodeLabel.DEVICE, NodeLabel.SERVER},
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.IP_ADDRESS}
     ),
     RelationshipType.HAS_PERMISSION: (
         {NodeLabel.USER, NodeLabel.EMAIL_ACCOUNT},
-        {NodeLabel.SERVER, NodeLabel.CRITICAL_ASSET, NodeLabel.APPLICATION, NodeLabel.DATABASE}
+        {NodeLabel.SERVER, NodeLabel.CRITICAL_ASSET, NodeLabel.APPLICATION}
     ),
     RelationshipType.HOSTS: (
         {NodeLabel.SERVER},
-        {NodeLabel.APPLICATION, NodeLabel.CRITICAL_ASSET, NodeLabel.DATABASE}
+        {NodeLabel.APPLICATION, NodeLabel.CRITICAL_ASSET}
     ),
     RelationshipType.HOSTED_ON: (
-        {NodeLabel.APPLICATION, NodeLabel.CRITICAL_ASSET, NodeLabel.DATABASE},
+        {NodeLabel.APPLICATION, NodeLabel.CRITICAL_ASSET},
         {NodeLabel.SERVER, NodeLabel.DEVICE}
     ),
     RelationshipType.RUNS_ON: (
-        {NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.DATABASE},
+        {NodeLabel.SERVER, NodeLabel.APPLICATION},
         {NodeLabel.DEVICE, NodeLabel.SERVER}
     ),
     RelationshipType.HAS_VULNERABILITY: (
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.DATABASE},
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION},
         {NodeLabel.VULNERABILITY}
     ),
     RelationshipType.CONTAINS_CRITICAL_DATA: (
-        {NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.DATABASE},
+        {NodeLabel.SERVER, NodeLabel.APPLICATION},
         {NodeLabel.CRITICAL_ASSET}
     ),
     RelationshipType.POTENTIAL_EXPLOIT: (
         {NodeLabel.DEVICE, NodeLabel.SERVER},
-        {NodeLabel.SERVER, NodeLabel.DATABASE}
+        {NodeLabel.SERVER}
     ),
     RelationshipType.EXPLOITS: (
         {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.SECURITY_EVENT},
-        {NodeLabel.VULNERABILITY, NodeLabel.SERVER, NodeLabel.CRITICAL_ASSET, NodeLabel.APPLICATION, NodeLabel.DATABASE}
+        {NodeLabel.VULNERABILITY, NodeLabel.SERVER, NodeLabel.CRITICAL_ASSET, NodeLabel.APPLICATION}
     ),
     RelationshipType.MEMBER_OF: (
         {NodeLabel.USER, NodeLabel.EMAIL_ACCOUNT},
@@ -277,10 +217,10 @@ VALID_RELATIONSHIP_ENDPOINTS: Dict[RelationshipType, Tuple[Set[NodeLabel], Set[N
     ),
     RelationshipType.OWNS: (
         {NodeLabel.USER},
-        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.EMAIL_ACCOUNT, NodeLabel.CRITICAL_ASSET, NodeLabel.DATABASE}
+        {NodeLabel.DEVICE, NodeLabel.SERVER, NodeLabel.APPLICATION, NodeLabel.EMAIL_ACCOUNT, NodeLabel.CRITICAL_ASSET}
     ),
     RelationshipType.ASSOCIATED_WITH_CASE: (
-        {NodeLabel.USER, NodeLabel.DEVICE, NodeLabel.IP_ADDRESS, NodeLabel.SERVER, NodeLabel.EMAIL_ACCOUNT, NodeLabel.DATABASE},
+        {NodeLabel.USER, NodeLabel.DEVICE, NodeLabel.IP_ADDRESS, NodeLabel.SERVER, NodeLabel.EMAIL_ACCOUNT},
         {NodeLabel.SECURITY_EVENT}
     ),
 }
@@ -293,31 +233,17 @@ CYPHER_SCHEMA_STATEMENTS = [
     "CREATE CONSTRAINT device_id_unique IF NOT EXISTS FOR (n:Device) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT server_id_unique IF NOT EXISTS FOR (n:Server) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT app_id_unique IF NOT EXISTS FOR (n:Application) REQUIRE n.id IS UNIQUE",
-    "CREATE CONSTRAINT db_id_unique IF NOT EXISTS FOR (n:Database) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT ip_id_unique IF NOT EXISTS FOR (n:IPAddress) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT vuln_id_unique IF NOT EXISTS FOR (n:Vulnerability) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT crit_id_unique IF NOT EXISTS FOR (n:CriticalAsset) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT event_id_unique IF NOT EXISTS FOR (n:SecurityEvent) REQUIRE n.id IS UNIQUE",
     "CREATE CONSTRAINT email_id_unique IF NOT EXISTS FOR (n:EmailAccount) REQUIRE n.id IS UNIQUE",
-
-    # Secondary property indexes for rapid lookup and traversal
+    
+    # Indexes for rapid property lookups during graph traversal
     "CREATE INDEX user_email_idx IF NOT EXISTS FOR (n:User) ON (n.email)",
-    "CREATE INDEX user_id_idx IF NOT EXISTS FOR (n:User) ON (n.user_id)",
     "CREATE INDEX device_ip_idx IF NOT EXISTS FOR (n:Device) ON (n.ip_address)",
-    "CREATE INDEX device_key_idx IF NOT EXISTS FOR (n:Device) ON (n.device_id)",
-    "CREATE INDEX device_hostname_idx IF NOT EXISTS FOR (n:Device) ON (n.hostname)",
     "CREATE INDEX server_ip_idx IF NOT EXISTS FOR (n:Server) ON (n.ip_address)",
-    "CREATE INDEX server_key_idx IF NOT EXISTS FOR (n:Server) ON (n.server_id)",
-    "CREATE INDEX server_hostname_idx IF NOT EXISTS FOR (n:Server) ON (n.hostname)",
-    "CREATE INDEX server_tier_idx IF NOT EXISTS FOR (n:Server) ON (n.tier)",
-    "CREATE INDEX server_env_idx IF NOT EXISTS FOR (n:Server) ON (n.environment)",
-    "CREATE INDEX app_key_idx IF NOT EXISTS FOR (n:Application) ON (n.app_id)",
-    "CREATE INDEX db_key_idx IF NOT EXISTS FOR (n:Database) ON (n.db_id)",
-    "CREATE INDEX db_engine_idx IF NOT EXISTS FOR (n:Database) ON (n.engine)",
     "CREATE INDEX vuln_cve_idx IF NOT EXISTS FOR (n:Vulnerability) ON (n.cve_id)",
     "CREATE INDEX crit_impact_idx IF NOT EXISTS FOR (n:CriticalAsset) ON (n.impact_score)",
-    "CREATE INDEX crit_key_idx IF NOT EXISTS FOR (n:CriticalAsset) ON (n.asset_id)",
     "CREATE INDEX email_addr_idx IF NOT EXISTS FOR (n:EmailAccount) ON (n.email_address)",
-    "CREATE INDEX event_case_idx IF NOT EXISTS FOR (n:SecurityEvent) ON (n.case_id)",
-    "CREATE INDEX event_key_idx IF NOT EXISTS FOR (n:SecurityEvent) ON (n.event_id)",
 ]

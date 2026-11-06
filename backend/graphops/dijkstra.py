@@ -564,7 +564,6 @@ class DijkstraShortestPathEngine:
             ),
             calculation_time_ms=calc_time_ms,
             warnings=warnings,
-            recommended_blast_radius_url=f"/api/v1/graphops/blast-radius?start_node_id={entry_node.id}",
         )
 
     def _describe_step(

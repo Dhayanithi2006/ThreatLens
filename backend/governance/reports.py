@@ -34,7 +34,6 @@ class ReportFormat(str, Enum):
     JSON = "json"
     CSV = "csv"
     HTML = "html"
-    PDF = "pdf"
 
 
 class GovernanceReportSummary(BaseModel):
@@ -318,9 +317,7 @@ class GovernanceReportService:
             )
 
         if fmt == "json":
-            from backend.governance.investigation_reports import redact_sensitive_credentials
-            sanitized = redact_sensitive_credentials(report.model_dump())
-            return json.dumps(sanitized, indent=2, default=str), "application/json"
+            return json.dumps(report.model_dump(), indent=2, default=str), "application/json"
 
         elif fmt == "csv":
             output = io.StringIO()
@@ -446,14 +443,8 @@ class GovernanceReportService:
 </html>"""
             return html_doc, "text/html"
 
-        elif fmt == "pdf":
-            from backend.governance.investigation_reports import redact_sensitive_credentials
-            from backend.governance.pdf_generator import generate_governance_pdf
-            sanitized = redact_sensitive_credentials(report.model_dump())
-            return generate_governance_pdf(sanitized), "application/pdf"
-
         else:
-            raise ValueError(f"Unsupported export format '{export_format}'. Supported formats: json, csv, html, pdf.")
+            raise ValueError(f"Unsupported export format '{export_format}'. Supported formats: json, csv, html.")
 
     @classmethod
     def get_evidence_ledger(cls) -> List[EvidenceLedgerItem]:
@@ -502,25 +493,6 @@ class GovernanceReportService:
                 verification_status="VERIFIED",
             ))
 
-        # Also include registered evidence items from EvidenceLedgerService
-        try:
-            from backend.governance.evidence_ledger import EvidenceLedgerService
-            existing_ids = {i.evidence_id.lower() for i in items}
-            for rec in EvidenceLedgerService.list_evidence():
-                if rec.evidence_id.lower() not in existing_ids:
-                    items.append(EvidenceLedgerItem(
-                        evidence_id=rec.evidence_id,
-                        evidence_type=rec.evidence_type,
-                        sha256_hash=rec.sha256_hash,
-                        timestamp=rec.ingested_at.isoformat(),
-                        source=rec.source,
-                        verification_status=rec.verification_status,
-                        verified_at=rec.ingested_at.isoformat(),
-                    ))
-                    existing_ids.add(rec.evidence_id.lower())
-        except Exception as e:
-            logger.debug("EvidenceLedgerService integration: %s", e)
-
         return items
 
     @classmethod
@@ -528,14 +500,6 @@ class GovernanceReportService:
         """
         Verifies SHA-256 digest for an evidence item.
         """
-        try:
-            from backend.governance.evidence_ledger import EvidenceLedgerService
-            res = EvidenceLedgerService.verify_evidence(evidence_id, provided_hash)
-            if res.get("status") != "EVIDENCE_NOT_FOUND":
-                return res
-        except Exception:
-            pass
-
         ledger = cls.get_evidence_ledger()
         matched = next((item for item in ledger if item.evidence_id.lower() == evidence_id.lower()), None)
         if not matched:

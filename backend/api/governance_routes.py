@@ -18,10 +18,7 @@ from backend.governance.catalog import (
 from backend.governance.evaluator import (
     evaluate_all_active_policies,
     evaluate_policy,
-    list_evaluation_history,
 )
-from backend.governance.evidence_ledger import EvidenceLedgerService
-from backend.governance.investigation_reports import InvestigationReportService
 from backend.governance.policies import (
     delete_policy,
     get_policy,
@@ -36,8 +33,6 @@ from backend.governance.reports import (
 from backend.governance.schema import (
     AuditRecord,
     ControlRecord,
-    EvidenceRecord,
-    InvestigationReport,
     OrganizationPolicy,
     PolicyEvaluation,
     RemediationPriority,
@@ -113,20 +108,6 @@ class VerifyEvidenceRequest(BaseModel):
         default=None,
         description="Optional SHA-256 digest to compare against the stored chain-of-custody hash",
     )
-
-
-class GenerateInvestigationReportRequest(BaseModel):
-    case_id: str = Field(description="Primary investigated case ID e.g. 'MT-101' or 'case:MT-101'")
-
-
-class RegisterEvidenceRequest(BaseModel):
-    evidence_id: Optional[str] = Field(default=None, description="Optional custom canonical evidence ID")
-    evidence_type: str = Field(default="GENERIC_EVIDENCE", description="EMAIL_FORENSICS, ENDPOINT_TELEMETRY, GRAPH_FINDING, etc.")
-    source: str = Field(default="THREATLENS_SOC", description="Originating subsystem")
-    payload: Dict[str, Any] = Field(default_factory=dict, description="Canonical evidence payload")
-    case_id: Optional[str] = Field(default=None, description="Associated case ID")
-    finding_id: Optional[str] = Field(default=None, description="Associated finding ID")
-    provenance: Optional[Dict[str, Any]] = Field(default=None, description="Source provenance metadata")
 
 
 # =============================================================================
@@ -256,12 +237,6 @@ async def evaluate_governance_policies(payload: EvaluateRequest):
     else:
         results = evaluate_all_active_policies(payload.finding_context, scope=payload.scope)
         return results
-
-
-@router.get("/evaluations/history", response_model=List[Dict[str, Any]])
-async def get_evaluation_history_log(limit: int = Query(50, ge=1, le=200)):
-    """Retrieves chronological policy evaluation run records and compliance trends."""
-    return list_evaluation_history(limit=limit)
 
 
 # =============================================================================
@@ -400,11 +375,11 @@ async def get_governance_report_by_id(report_id: str):
 @router.get("/reports/{report_id}/export")
 async def export_governance_report(
     report_id: str,
-    format: str = Query("json", description="Export format: 'json', 'csv', 'html', or 'pdf'"),
+    format: str = Query("json", description="Export format: 'json', 'csv', or 'html'"),
     actor: str = Depends(get_actor_identity),
 ):
     """
-    Exports a generated governance report in JSON, CSV, safe HTML, or PDF format.
+    Exports a generated governance report in JSON, CSV, or safe HTML format.
     Ensures XSS safety on HTML exports via strict HTML escaping.
     """
     try:
@@ -450,114 +425,3 @@ async def verify_evidence_hash(payload: VerifyEvidenceRequest):
             detail=res.get("detail", "Evidence not found."),
         )
     return res
-
-
-# =============================================================================
-# 7. Investigation Reports Endpoints
-# =============================================================================
-
-@router.post("/reports/investigation", response_model=InvestigationReport, status_code=status.HTTP_201_CREATED)
-async def generate_investigation_report_endpoint(
-    payload: GenerateInvestigationReportRequest,
-    actor: str = Depends(get_actor_identity),
-):
-    """
-    Generates a cross-module investigation dossier connecting security alerts,
-    timeline events, attack paths, blast radius, access anomalies, and compliance evaluations.
-    """
-    return InvestigationReportService.generate_investigation_report(
-        case_id=payload.case_id,
-        actor_id=actor,
-    )
-
-
-@router.get("/reports/investigation/{case_id}", response_model=InvestigationReport)
-async def get_investigation_report_endpoint(
-    case_id: str,
-    actor: str = Depends(get_actor_identity),
-):
-    """Retrieves an existing investigation report or generates a fresh dossier for the case."""
-    rpt = InvestigationReportService.get_investigation_report(case_id)
-    if not rpt:
-        rpt = InvestigationReportService.generate_investigation_report(case_id, actor_id=actor)
-    return rpt
-
-
-@router.get("/reports/investigation/{case_id}/export")
-async def export_investigation_report_endpoint(
-    case_id: str,
-    format: str = Query("json", description="Export format: 'json', 'html', or 'pdf'"),
-    actor: str = Depends(get_actor_identity),
-):
-    """
-    Exports an investigation report with sensitive credential redaction,
-    tamper-evident audit recording, and verifiable evidence hashes.
-    """
-    try:
-        content, media_type = InvestigationReportService.export_investigation_report(
-            case_id=case_id,
-            export_format=format,
-            actor_id=actor,
-            record_audit=True,
-        )
-        return Response(content=content, media_type=media_type)
-    except KeyError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Investigation report for case '{case_id}' not found.",
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-
-
-# =============================================================================
-# 8. Enhanced Evidence Records & Chain-of-Custody Ledger
-# =============================================================================
-
-@router.get("/evidence/records", response_model=List[EvidenceRecord])
-async def list_evidence_records(
-    case_id: Optional[str] = Query(None, description="Filter by case ID"),
-    finding_id: Optional[str] = Query(None, description="Filter by finding ID"),
-    evidence_type: Optional[str] = Query(None, description="Filter by evidence type"),
-    limit: int = Query(100, ge=1, le=500),
-):
-    """Lists granular chain-of-custody evidence records with dual timestamps and provenance."""
-    EvidenceLedgerService.auto_sync_from_subsystems()
-    return EvidenceLedgerService.list_evidence(
-        case_id=case_id,
-        finding_id=finding_id,
-        evidence_type=evidence_type,
-        limit=limit,
-    )
-
-
-@router.post("/evidence", response_model=EvidenceRecord, status_code=status.HTTP_201_CREATED)
-async def register_evidence_record(
-    payload: RegisterEvidenceRequest,
-    actor: str = Depends(verify_admin_access),
-):
-    """Registers an immutable evidence item in the cryptographic chain of custody."""
-    return EvidenceLedgerService.register_evidence(
-        evidence_id=payload.evidence_id,
-        evidence_type=payload.evidence_type,
-        source=payload.source,
-        payload=payload.payload,
-        case_id=payload.case_id,
-        finding_id=payload.finding_id,
-        provenance=payload.provenance,
-        actor_id=actor,
-    )
-
-
-@router.get("/evidence/verify-chain")
-async def verify_evidence_chain_integrity():
-    """Validates SHA-256 hash chaining across all registered evidence records."""
-    is_valid, error_msg = EvidenceLedgerService.verify_chain_integrity()
-    return {
-        "chain_intact": is_valid,
-        "status": "VERIFIED_TAMPER_FREE" if is_valid else "INTEGRITY_VIOLATION_DETECTED",
-        "error_detail": error_msg,
-    }

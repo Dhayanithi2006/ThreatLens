@@ -1,0 +1,38 @@
+{
+  "model_name": "StructuralGraphSAGE",
+  "model_version": "1.0.0",
+  "feature_schema_version": "1.0.0",
+  "training_timestamp": "2026-11-04T18:05:40.462480+00:00",
+  "graph_snapshot_id": "snap-0d117bb48c4b",
+  "num_nodes": 35,
+  "num_edges": 25,
+  "train_edges": 17,
+  "val_edges": 3,
+  "test_edges": 5,
+  "embedding_dim": 64,
+  "hidden_dim": 64,
+  "num_epochs": 100,
+  "learning_rate": 0.01,
+  "threshold": 38.0,
+  "device": "cpu",
+  "metrics": {
+    "test_roc_auc": 0.92,
+    "test_average_precision": 0.9429,
+    "test_f1": 0.9091,
+    "test_precision": 0.8333,
+    "test_recall": 1.0,
+    "confusion_matrix": {
+      "true_negatives": 4,
+      "false_positives": 1,
+      "false_negatives": 0,
+      "true_positives": 5
+    },
+    "validation_best_f1": 0.8571,
+    "selected_threshold": 38.0
+  },
+  "limitations": [
+    "Evaluated on enterprise baseline graph with negative non-edge sampling.",
+    "Dynamic temporal edge timestamps are aggregated into unified message-passing snapshot.",
+    "Higher anomaly score indicates low structural plausibility in current topological context."
+  ]
+}

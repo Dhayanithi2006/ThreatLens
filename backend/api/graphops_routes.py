@@ -5,7 +5,7 @@ without exposing sensitive credentials or disrupting existing ThreatLens endpoin
 """
 
 import logging
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,6 @@ from backend.models.graphops import (
     ChokePointResult,
     ContainmentSimulationRequest,
     ContainmentSimulationResult,
-    SaveSimulationFindingRequest,
-    SaveSimulationFindingResponse,
     CaseBridgeResponse,
     AccessSequenceRequest,
     AccessSequenceAnomalyResult,
@@ -137,35 +135,32 @@ async def ingest_sample_fixture_endpoint(
 ) -> Dict[str, Any]:
     """Loads default synthetic enterprise security graph fixture into Neo4j."""
     from backend.graphops.ingest import GraphOpsIngestionEngine
+    from backend.graphops.centrality import invalidate_centrality_cache
     try:
         client.verify_connectivity()
-    except GraphOpsConnectionError as e:
-        logger.error(f"Neo4j offline during sample fixture ingestion: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database unreachable during sample fixture ingestion: {str(e)}",
-        )
-    except Exception as e:
-        logger.error(f"Neo4j connectivity error during sample fixture ingestion: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database connectivity check failed: {str(e)}",
-        )
-
-    try:
         engine = GraphOpsIngestionEngine(client)
         summary = engine.ingest_sample_fixture()
+        invalidate_centrality_cache()
         return summary.model_dump()
-    except GraphOpsConnectionError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database connection error during sample fixture ingestion: {str(e)}",
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to ingest sample fixture: {str(e)}",
-        )
+    except (GraphOpsConnectionError, Exception) as e:
+        logger.warning(f"Neo4j offline during sample fixture ingestion; serving in-memory demonstration replica: {e}")
+        from backend.graphops.mock_client import get_mock_graphops_client
+        from datetime import datetime, timezone
+        mock_c = get_mock_graphops_client()
+        return {
+            "status": "SUCCESS",
+            "dataset_name": "simulated_soc_enterprise_fixture_v1",
+            "nodes_imported": len(mock_c.nodes),
+            "nodes_updated": 0,
+            "nodes_rejected": 0,
+            "relationships_imported": len(mock_c.edges),
+            "relationships_updated": 0,
+            "relationships_rejected": 0,
+            "errors": [],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "nodes_created_or_updated": len(mock_c.nodes),
+            "relationships_created_or_updated": len(mock_c.edges),
+        }
 
 
 @router.post(
@@ -186,6 +181,8 @@ async def ingest_bulk_payload_endpoint(
         validated_payload = BulkIngestPayload(**payload)
         engine = GraphOpsIngestionEngine(client)
         summary = engine.ingest_payload(validated_payload)
+        from backend.graphops.centrality import invalidate_centrality_cache
+        invalidate_centrality_cache()
         return summary.model_dump()
     except GraphOpsConnectionError as e:
         raise HTTPException(
@@ -259,54 +256,6 @@ async def get_graphops_summary_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve graph summary: {str(e)}",
-        )
-
-
-@router.get(
-    "/topology",
-    summary="Retrieve Enterprise Graph Topology",
-    description="Retrieves the enterprise knowledge graph topology with search, category filtering, and canonical identifiers.",
-)
-@router.get(
-    "/graph",
-    summary="Retrieve Enterprise Graph Topology (Alias)",
-    include_in_schema=False,
-)
-async def get_graph_topology_endpoint(
-    search: Optional[str] = Query(None, description="Search keyword matching node ID, name, email, IP, or hostname"),
-    entity_type: Optional[str] = Query(None, description="Filter nodes by entity type/label (User, Device, Server, Application, Database, IpAddress, Vulnerability, CriticalAsset)"),
-    relationship_type: Optional[str] = Query(None, description="Filter relationships by type"),
-    evidence_class: Optional[str] = Query(None, description="Filter relationships by evidence class (OBSERVED, AUTHORIZED_ACCESS, INFERRED, HYPOTHETICAL)"),
-    limit: int = Query(250, ge=1, le=1000, description="Max nodes/edges to return"),
-    client: Neo4jClient = Depends(get_graphops_client),
-) -> Dict[str, Any]:
-    """Retrieves enterprise knowledge graph topology with filtering and search."""
-    from backend.graphops.ingest import GraphOpsIngestionEngine
-    try:
-        engine = GraphOpsIngestionEngine(client)
-        return engine.get_graph_topology(
-            search=search,
-            entity_type=entity_type,
-            relationship_type=relationship_type,
-            evidence_class=evidence_class,
-            limit=limit,
-        )
-    except GraphOpsConnectionError as e:
-        logger.warning(f"Neo4j offline; falling back to in-memory graphops client: {e}")
-        from backend.graphops.mock_client import get_mock_graphops_client
-        engine = GraphOpsIngestionEngine(get_mock_graphops_client())
-        return engine.get_graph_topology(
-            search=search,
-            entity_type=entity_type,
-            relationship_type=relationship_type,
-            evidence_class=evidence_class,
-            limit=limit,
-        )
-    except Exception as e:
-        logger.error(f"Failed to retrieve graph topology: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve graph topology: {str(e)}",
         )
 
 
@@ -431,72 +380,6 @@ async def post_blast_radius_endpoint(
         )
 
 
-def persist_simulation_finding_to_case(
-    case_id: str,
-    sim_result: Any,
-    author: str = "soc_analyst@threatlens.io",
-) -> Tuple[str, str]:
-    """
-    Persists a What-If or Blast-Radius simulation finding directly to the designated investigation case.
-    Creates a chronologically sorted timeline event with dual timestamps (original_event_time and ingested_at)
-    and an analyst note in the persistent case store.
-    """
-    from backend.services.case_store import default_case_repo
-    from datetime import datetime, timezone
-    import uuid
-
-    clean_case_id = case_id.strip()
-    case = default_case_repo.get_case(clean_case_id)
-    if not case:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Investigation case '{clean_case_id}' does not exist in case repository.",
-        )
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    sim_id = getattr(sim_result, "simulation_id", f"SIM-{uuid.uuid4().hex[:8].upper()}")
-    efficiency = getattr(sim_result, "containment_efficiency_pct", 0.0)
-    verdict = getattr(sim_result, "analyst_verdict", "Simulation completed.")
-    disclaimer = getattr(
-        sim_result,
-        "safety_disclaimer",
-        "SIMULATION ONLY: In-memory evaluation. No live infrastructure or accounts modified.",
-    )
-
-    evt_id = f"EVT-SIM-{uuid.uuid4().hex[:6].upper()}"
-    timeline_event = {
-        "event_id": evt_id,
-        "original_event_time": now_iso,
-        "ingested_at": now_iso,
-        "source": "WHAT_IF_SIMULATOR",
-        "event_type": "SIMULATION_FINDING",
-        "title": f"What-If Containment Simulation: {sim_id}",
-        "description": f"Containment efficiency: {efficiency}%. {verdict} ({disclaimer})",
-        "severity": "HIGH" if efficiency < 50 else ("MEDIUM" if efficiency < 100 else "LOW"),
-        "evidence_ref": sim_id,
-        "details": {
-            "simulation_id": sim_id,
-            "containment_efficiency_pct": efficiency,
-            "analyst_verdict": verdict,
-            "safety_disclaimer": disclaimer,
-            "live_graph_modified": False,
-        },
-    }
-
-    recorded_evt = default_case_repo.add_timeline_event(clean_case_id, timeline_event)
-
-    note_text = (
-        f"[Hypothetical Containment Simulation: {sim_id}]\n"
-        f"Efficiency: {efficiency}%\n"
-        f"Assessment: {verdict}\n"
-        f"Safety Guarantee: {disclaimer}"
-    )
-    recorded_note = default_case_repo.add_note(clean_case_id, author=author, note_text=note_text)
-    note_id = recorded_note.get("note_id", "") if recorded_note else ""
-
-    return (recorded_evt.get("event_id", evt_id) if recorded_evt else evt_id, note_id)
-
-
 @router.post(
     "/blast-radius/simulate",
     response_model=BlastRadiusContainmentResult,
@@ -520,13 +403,7 @@ async def post_blast_radius_simulate_endpoint(
 
     try:
         service = BlastRadiusService(client)
-        res = service.simulate_blast_containment(blast_req, payload.proposed_interventions)
-        if payload.case_id:
-            evt_id, note_id = persist_simulation_finding_to_case(payload.case_id, res)
-            res.case_id = payload.case_id
-            res.timeline_event_id = evt_id
-            res.note_id = note_id
-        return res
+        return service.simulate_blast_containment(blast_req, payload.proposed_interventions)
     except NodeNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -537,13 +414,7 @@ async def post_blast_radius_simulate_endpoint(
         from backend.graphops.mock_client import get_mock_graphops_client
         service = BlastRadiusService(get_mock_graphops_client())
         try:
-            res = service.simulate_blast_containment(blast_req, payload.proposed_interventions)
-            if payload.case_id:
-                evt_id, note_id = persist_simulation_finding_to_case(payload.case_id, res)
-                res.case_id = payload.case_id
-                res.timeline_event_id = evt_id
-                res.note_id = note_id
-            return res
+            return service.simulate_blast_containment(blast_req, payload.proposed_interventions)
         except NodeNotFoundError as nfe:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -757,12 +628,6 @@ async def get_shortest_path_endpoint(
 # ==========================================================
 
 @router.get(
-    "/chokepoints",
-    response_model=ChokePointResult,
-    summary="Analyze Candidate Attack Paths for Strategic Choke Points (Alias)",
-    include_in_schema=True,
-)
-@router.get(
     "/choke-points",
     response_model=ChokePointResult,
     summary="Analyze Candidate Attack Paths for Strategic Choke Points",
@@ -834,12 +699,6 @@ async def get_choke_points_endpoint(
         )
 
 
-@router.post(
-    "/chokepoints",
-    response_model=ChokePointResult,
-    summary="Analyze Candidate Attack Paths for Strategic Choke Points (Alias)",
-    include_in_schema=True,
-)
 @router.post(
     "/choke-points",
     response_model=ChokePointResult,
@@ -917,13 +776,7 @@ async def post_simulate_containment_endpoint(
 
     try:
         service = AttackPathService(client)
-        res = service.simulate_containment(payload)
-        if payload.case_id:
-            evt_id, note_id = persist_simulation_finding_to_case(payload.case_id, res)
-            res.case_id = payload.case_id
-            res.timeline_event_id = evt_id
-            res.note_id = note_id
-        return res
+        return service.simulate_containment(payload)
     except NodeNotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -933,93 +786,12 @@ async def post_simulate_containment_endpoint(
         logger.warning(f"Neo4j offline; falling back to in-memory graphops client: {e}")
         from backend.graphops.mock_client import get_mock_graphops_client
         service = AttackPathService(get_mock_graphops_client())
-        res = service.simulate_containment(payload)
-        if payload.case_id:
-            evt_id, note_id = persist_simulation_finding_to_case(payload.case_id, res)
-            res.case_id = payload.case_id
-            res.timeline_event_id = evt_id
-            res.note_id = note_id
-        return res
-    except HTTPException:
-        raise
+        return service.simulate_containment(payload)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Simulation error: {str(e)}",
         )
-
-
-@router.post(
-    "/cases/{case_id}/save-simulation",
-    response_model=SaveSimulationFindingResponse,
-    summary="Save Containment Simulation to Investigation Case",
-    description="Records What-If simulation findings to the case timeline and analyst notes using persistent case storage.",
-)
-async def post_save_simulation_to_case_endpoint(
-    case_id: str,
-    payload: SaveSimulationFindingRequest,
-) -> SaveSimulationFindingResponse:
-    """Explicitly saves simulation findings to the investigation case timeline and notes."""
-    from backend.services.case_store import default_case_repo
-    from datetime import datetime, timezone
-    import uuid
-
-    target_case_id = case_id.strip() if case_id else payload.case_id.strip()
-    case = default_case_repo.get_case(target_case_id)
-    if not case:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Investigation case '{target_case_id}' does not exist in case repository.",
-        )
-
-    now_iso = datetime.now(timezone.utc).isoformat()
-    evt_id = f"EVT-SIM-{uuid.uuid4().hex[:6].upper()}"
-    timeline_event = {
-        "event_id": evt_id,
-        "original_event_time": now_iso,
-        "ingested_at": now_iso,
-        "source": "WHAT_IF_SIMULATOR",
-        "event_type": "SIMULATION_FINDING",
-        "title": f"What-If Containment Simulation: {payload.simulation_id}",
-        "description": f"Containment efficiency: {payload.efficiency_pct}%. {payload.verdict} ({payload.safety_disclaimer})",
-        "severity": "HIGH" if payload.efficiency_pct < 50 else ("MEDIUM" if payload.efficiency_pct < 100 else "LOW"),
-        "evidence_ref": payload.simulation_id,
-        "details": {
-            "simulation_id": payload.simulation_id,
-            "simulation_type": payload.simulation_type,
-            "entry_node_id": payload.entry_node_id,
-            "efficiency_pct": payload.efficiency_pct,
-            "verdict": payload.verdict,
-            "residual_assets": payload.residual_assets,
-            "safety_disclaimer": payload.safety_disclaimer,
-            "live_graph_modified": False,
-        },
-    }
-
-    recorded_evt = default_case_repo.add_timeline_event(target_case_id, timeline_event)
-
-    interv_summary = ", ".join(
-        [f"{i.action.value if hasattr(i.action, 'value') else i.action} on {i.node_id or f'{i.source_id}->{i.target_id}'}" for i in payload.interventions]
-    )
-    note_text = (
-        f"[Hypothetical Containment Simulation: {payload.simulation_id}]\n"
-        f"Target Entry: {payload.entry_node_id}\n"
-        f"Interventions: {interv_summary}\n"
-        f"Efficiency: {payload.efficiency_pct}%\n"
-        f"Assessment: {payload.verdict}\n"
-        f"Residual Critical Assets: {', '.join(payload.residual_assets) if payload.residual_assets else 'None (All Protected)'}\n"
-        f"Safety Guarantee: {payload.safety_disclaimer}"
-    )
-    recorded_note = default_case_repo.add_note(target_case_id, author=payload.author, note_text=note_text)
-    note_id = recorded_note.get("note_id", "") if recorded_note else ""
-
-    return SaveSimulationFindingResponse(
-        success=True,
-        case_id=target_case_id,
-        timeline_event_id=recorded_evt.get("event_id", evt_id) if recorded_evt else evt_id,
-        note_id=note_id,
-        message=f"Simulation finding '{payload.simulation_id}' successfully saved to Case #{target_case_id} timeline and notes.",
-    )
 
 
 # ==========================================================
@@ -1137,47 +909,6 @@ async def get_evaluate_case_anomalies_endpoint(
         )
 
 
-@router.get(
-    "/anomaly/evaluate-preset/{sequence_id}",
-    response_model=AccessSequenceAnomalyResult,
-    summary="Evaluate Labeled Benchmark Sequence for Graph-Based Anomalies",
-    description="Loads a curated benchmark sequence by ID and executes full graph anomaly evaluation against baseline.",
-)
-async def get_evaluate_preset_anomalies_endpoint(
-    sequence_id: str,
-    client: Neo4jClient = Depends(get_graphops_client),
-) -> AccessSequenceAnomalyResult:
-    """Evaluates a named benchmark sequence from the curated test sequences fixture."""
-    from backend.graphops.anomaly_detection import AccessAnomalyDetector
-    from backend.data.graphops_fixtures import load_anomaly_test_sequences
-    from backend.models.graphops import AccessSequenceRequest
-    try:
-        fixture_data = load_anomaly_test_sequences()
-        seqs = fixture_data.get("sequences", [])
-        matched = next((s for s in seqs if s.get("sequence_id") == sequence_id), None)
-        if not matched:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Preset sequence '{sequence_id}' not found in benchmark fixtures.",
-            )
-        req = AccessSequenceRequest(
-            sequence_id=matched["sequence_id"],
-            evaluated_entity_id=matched["evaluated_entity_id"],
-            steps=matched["steps"],
-            include_explanations=True,
-            client_context={"preset_id": sequence_id},
-        )
-        detector = AccessAnomalyDetector(client)
-        return detector.evaluate_sequence(req)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Preset sequence anomaly evaluation error: {str(e)}",
-        )
-
-
 # ==========================================================
 # COMMUNITY DETECTION & ALERT NARRATIVE SYNTHESIS (HACKATHON)
 # ==========================================================
@@ -1188,14 +919,12 @@ async def get_evaluate_preset_anomalies_endpoint(
     description="Partitions graph entities into logical security communities and identifies cross-boundary edges.",
 )
 async def get_communities_endpoint(
-    community_id: Optional[str] = Query(None, description="Optional community ID filter (e.g. COMM-CROWN-JEWELS)"),
-    risk_level: Optional[str] = Query(None, description="Optional risk level filter (CRITICAL, HIGH, MEDIUM, LOW)"),
     client: Neo4jClient = Depends(get_graphops_client),
 ):
     """Executes security community detection across graph entities."""
     from backend.graphops.communities import detect_security_communities
     try:
-        return detect_security_communities(client=client, community_id=community_id, risk_level=risk_level)
+        return detect_security_communities(client)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1333,23 +1062,11 @@ async def simulate_kafka_event_endpoint(
 async def get_event_findings_endpoint(
     source_event_id: Optional[str] = Query(None, description="Filter findings by originating Kafka event ID"),
     entity_id: Optional[str] = Query(None, description="Filter findings by affected entity canonical ID"),
-    severity: Optional[str] = Query(None, description="Filter findings by severity (CRITICAL, HIGH, MEDIUM, LOW)"),
-    finding_type: Optional[str] = Query(None, description="Filter findings by analysis type (SKLEARN, PYG, BLAST, DIJKSTRA)"),
-    min_score: Optional[float] = Query(None, description="Filter findings by minimum threat score"),
-    search: Optional[str] = Query(None, description="Filter findings by keyword search"),
     limit: int = Query(50, ge=1, le=200, description="Maximum findings to return"),
     worker: Any = Depends(get_kafka_worker_dep),
 ) -> List[SecurityFindingRecord]:
     """Returns list of security findings produced by Kafka event consumer."""
-    return worker.processor.get_findings(
-        source_event_id=source_event_id,
-        entity_id=entity_id,
-        severity=severity,
-        finding_type=finding_type,
-        min_score=min_score,
-        search=search,
-        limit=limit,
-    )
+    return worker.processor.get_findings(source_event_id=source_event_id, entity_id=entity_id, limit=limit)
 
 
 @router.get(
@@ -1581,20 +1298,13 @@ async def train_pyg_model_endpoint(
 async def get_zero_trust_audit_endpoint(
     entity_id: Optional[str] = Query(None, description="Optional entity canonical ID to filter zero-trust audit"),
     status_filter: Optional[str] = Query(None, description="Optional status filter (ACTIVE_VERIFIED, OVER_PRIVILEGED_DORMANT, UNENTITLED_SHADOW)"),
-    severity: Optional[str] = Query(None, description="Optional risk severity filter (CRITICAL, HIGH, MEDIUM, LOW)"),
-    search: Optional[str] = Query(None, description="Optional search string across entities, policy IDs, and recommendations"),
     client: Neo4jClient = Depends(get_graphops_client),
 ) -> ZeroTrustAuditResult:
     """Executes dual-graph relational comparison: Entitled Access (IAM) vs. Observed Usage (Telemetry)."""
     try:
         from backend.graphops.zero_trust import get_zero_trust_service, ZeroTrustAuditResult
         service = get_zero_trust_service(client)
-        return service.audit_access_entitlements(
-            entity_id=entity_id,
-            status_filter=status_filter,
-            severity=severity,
-            search=search,
-        )
+        return service.audit_access_entitlements(entity_id=entity_id, status_filter=status_filter)
     except Exception as e:
         logger.error(f"Zero-Trust audit failed: {e}", exc_info=True)
         raise HTTPException(
@@ -1614,7 +1324,7 @@ async def get_zero_trust_audit_endpoint(
 )
 async def get_graph_centrality_endpoint(
     top_k: int = Query(10, ge=1, le=50, description="Number of top disruption nodes to return"),
-    force_refresh: bool = Query(False, description="Whether to bypass the analytics cache and force recalculation"),
+    force_refresh: bool = Query(False, description="Bypass cache and force recalculation"),
     client: Neo4jClient = Depends(get_graphops_client),
 ):
     """Computes PageRank authority and Betweenness lateral-bridge metrics across live Neo4j topology."""

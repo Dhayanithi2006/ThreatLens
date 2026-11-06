@@ -43,31 +43,27 @@ class CommunityDetectionResult(BaseModel):
     total_communities: int
     cross_boundary_edges_count: int
     modularity_score: float
-    execution_time_ms: float
-    total_nodes: Optional[int] = None
     modularity_q: Optional[float] = None
     cross_boundary_transitions: Optional[List[BoundaryEdge]] = None
+    total_nodes: Optional[int] = None
+    execution_time_ms: float
     disclaimer: str = (
         "Algorithmic graph partition for lateral movement hunting; "
         "cross-boundary transitions represent key network tier crossings."
     )
 
 
-def detect_security_communities(
-    client=None,
-    community_id: Optional[str] = None,
-    risk_level: Optional[str] = None,
-) -> CommunityDetectionResult:
+def detect_security_communities(client=None) -> CommunityDetectionResult:
     """
     Performs modularity-based security enclave community detection across the enterprise graph.
     Identifies intra-cluster cohesion and surfaces cross-cluster boundary pivot edges.
-    Supports optional filtering by community_id and risk_level.
     """
     start_time = time.perf_counter()
     neo4j_client = client or get_graphops_client()
 
     nodes_data: List[Dict[str, Any]] = []
     edges_data: List[Dict[str, Any]] = []
+    queried_live = False
 
     # 1. Fetch live graph topology or fallback to fixtures
     if neo4j_client:
@@ -97,11 +93,13 @@ def detect_security_communities(
                     if r.get("id")
                 ]
                 edges_data = [dict(r) for r in rel_records]
+                queried_live = True
         except Exception:
             nodes_data = []
             edges_data = []
+            queried_live = False
 
-    if not nodes_data or not edges_data:
+    if not queried_live:
         # Fallback to rich curated enterprise baseline fixture
         fixture = load_sample_enterprise_fixture()
         entities = fixture.get("entities", {})
@@ -126,17 +124,35 @@ def detect_security_communities(
             for e in rels_list
         ]
 
+    # Handle empty graph cleanly
+    if not nodes_data:
+        return CommunityDetectionResult(
+            communities=[],
+            boundary_edges=[],
+            total_communities=0,
+            cross_boundary_edges_count=0,
+            modularity_score=0.0,
+            execution_time_ms=round((time.perf_counter() - start_time) * 1000.0, 2),
+            disclaimer="Enclave Modularity & Boundary Pivot Partitioning: Evaluated 0 entities across empty graph snapshot.",
+        )
+
     # 2. Build adjacency for partition heuristics
     node_map = {n["id"]: n for n in nodes_data}
     node_ids = set(node_map.keys())
 
-    # Pre-defined semantic security tier mappings based on entity type and naming
-    # 4 Core Enterprise Zones:
-    # COMM-1: Workstation & User Endpoints
-    # COMM-2: DMZ & Application Gateway Tier
-    # COMM-3: Crown Jewel & Sensitive Data Enclave
-    # COMM-4: Identity & Active Directory Enclave
+    adj: Dict[str, Set[str]] = {nid: set() for nid in node_ids}
+    for e in edges_data:
+        s, t = e.get("source"), e.get("target")
+        if s in adj and t in adj:
+            adj[s].add(t)
+            adj[t].add(s)
+
+    # Semantic security enclave mappings based on topology, entity type and connectivity
     def _classify_node_community(nid: str, node: Dict[str, Any]) -> str:
+        # Isolated nodes with zero degree are assigned to an explicit isolated enclave
+        if len(adj.get(nid, set())) == 0:
+            return "COMM-ISOLATED"
+
         s = nid.lower()
         lbl = str(node.get("label", "")).upper()
         if "dc-" in s or "ad" in s or "admin" in s or "domain" in s:
@@ -152,15 +168,6 @@ def detect_security_communities(
     community_membership: Dict[str, str] = {}
     for nid, node in node_map.items():
         community_membership[nid] = _classify_node_community(nid, node)
-
-    # 3. Label Propagation Refinement (group tightly connected unclassified nodes)
-    # Ensure graph connectivity influences community bounds
-    adj: Dict[str, Set[str]] = {nid: set() for nid in node_ids}
-    for e in edges_data:
-        s, t = e["source"], e["target"]
-        if s in adj and t in adj:
-            adj[s].add(t)
-            adj[t].add(s)
 
     # Count internal edges and boundary edges
     community_nodes: Dict[str, List[str]] = {}
@@ -191,13 +198,13 @@ def detect_security_communities(
                 BoundaryEdge(
                     source_id=s,
                     target_id=t,
-                    source_node=s,
-                    target_node=t,
                     relationship_type=rel,
                     source_community=c_src,
                     target_community=c_dst,
                     is_cross_tier=is_cross,
                     risk_level=risk,
+                    source_node=s,
+                    target_node=t,
                 )
             )
 
@@ -228,6 +235,11 @@ def detect_security_communities(
             "desc": "Shared network peripherals, logging relays, and utility nodes.",
             "risk": "LOW",
         },
+        "COMM-ISOLATED": {
+            "name": "Isolated & Unassigned Assets",
+            "desc": "Assets with zero graph interactions or observed edge connectivity.",
+            "risk": "LOW",
+        },
     }
 
     clusters: List[CommunityCluster] = []
@@ -246,43 +258,36 @@ def detect_security_communities(
                 description=meta["desc"],
                 risk_level=meta["risk"],
                 node_ids=sorted_members,
-                node_count=len(sorted_members),
-                sample_nodes=sorted_members[:5],
                 critical_asset_count=crit_count,
                 internal_edge_count=internal_edge_counts.get(cid, 0),
+                node_count=len(members),
+                sample_nodes=sorted_members[:5],
             )
         )
 
     # Sort clusters by priority
-    order = {"COMM-CROWN-JEWELS": 0, "COMM-IAM": 1, "COMM-DMZ-GATEWAYS": 2, "COMM-USER-ENDPOINTS": 3, "COMM-GENERAL-ASSETS": 4}
+    order = {"COMM-CROWN-JEWELS": 0, "COMM-IAM": 1, "COMM-DMZ-GATEWAYS": 2, "COMM-USER-ENDPOINTS": 3, "COMM-GENERAL-ASSETS": 4, "COMM-ISOLATED": 5}
     clusters.sort(key=lambda c: order.get(c.community_id, 99))
-
-    # Apply optional filtering
-    filtered_clusters = clusters
-    filtered_boundaries = boundary_edges
-    if community_id:
-        c_filter = community_id.strip().upper()
-        filtered_clusters = [c for c in filtered_clusters if c.community_id.upper() == c_filter]
-        filtered_boundaries = [b for b in filtered_boundaries if b.source_community.upper() == c_filter or b.target_community.upper() == c_filter]
-    if risk_level:
-        r_filter = risk_level.strip().upper()
-        filtered_clusters = [c for c in filtered_clusters if c.risk_level.upper() == r_filter]
-        filtered_boundaries = [b for b in filtered_boundaries if b.risk_level.upper() == r_filter]
 
     # Calculate Newman-Girvan modularity metric (approximate Q)
     m = max(len(edges_data), 1)
     q_score = max(0.42, min(0.85, 1.0 - (len(boundary_edges) / (2.0 * m))))
 
     exec_time = round((time.perf_counter() - start_time) * 1000, 2)
+    q_rounded = round(q_score, 3)
 
     return CommunityDetectionResult(
-        communities=filtered_clusters,
-        boundary_edges=filtered_boundaries,
-        total_communities=len(filtered_clusters),
-        cross_boundary_edges_count=len(filtered_boundaries),
-        modularity_score=round(q_score, 3),
-        modularity_q=round(q_score, 3),
+        communities=clusters,
+        boundary_edges=boundary_edges,
+        total_communities=len(clusters),
+        cross_boundary_edges_count=len(boundary_edges),
+        modularity_score=q_rounded,
+        modularity_q=q_rounded,
+        cross_boundary_transitions=boundary_edges,
         total_nodes=len(node_map),
-        cross_boundary_transitions=filtered_boundaries,
         execution_time_ms=exec_time,
+        disclaimer=(
+            "Enclave Modularity & Boundary Pivot Partitioning: Algorithmic graph partition for lateral movement hunting; "
+            "cross-boundary transitions represent key network tier crossings."
+        ),
     )

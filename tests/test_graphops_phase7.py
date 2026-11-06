@@ -213,9 +213,14 @@ def test_fastapi_all_engine_health_endpoints(test_client):
 # 5. FRONTEND CONTRACT INTEGRITY TESTS
 # =====================================================================
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HTML_PATH = REPO_ROOT / "frontend" / "index.html" if (REPO_ROOT / "frontend" / "index.html").exists() else Path("frontend/index.html")
+CSS_PATH = REPO_ROOT / "frontend" / "css" / "styles.css" if (REPO_ROOT / "frontend" / "css" / "styles.css").exists() else Path("frontend/css/styles.css")
+JS_PATH = REPO_ROOT / "frontend" / "js" / "app.js" if (REPO_ROOT / "frontend" / "js" / "app.js").exists() else Path("frontend/js/app.js")
+
 def test_frontend_html_contracts():
     """Verifies required Phase 7 UI element IDs and data attributes exist in index.html."""
-    html_path = Path("frontend/index.html")
+    html_path = HTML_PATH
     assert html_path.exists(), "frontend/index.html must exist"
     content = html_path.read_text(encoding="utf-8")
 
@@ -262,7 +267,7 @@ def test_frontend_html_contracts():
 
 def test_frontend_css_contracts():
     """Verifies required Phase 7 CSS classes exist in styles.css."""
-    css_path = Path("frontend/css/styles.css")
+    css_path = CSS_PATH
     assert css_path.exists(), "frontend/css/styles.css must exist"
     content = css_path.read_text(encoding="utf-8")
 
@@ -277,7 +282,7 @@ def test_frontend_css_contracts():
 
 def test_frontend_js_contracts():
     """Verifies required Phase 7 functions and state variables exist in app.js."""
-    js_path = Path("frontend/js/app.js")
+    js_path = JS_PATH
     assert js_path.exists(), "frontend/js/app.js must exist"
     content = js_path.read_text(encoding="utf-8")
 

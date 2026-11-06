@@ -21,7 +21,3 @@ scratch/
 
 # ThreatLens Collector - never commit enrolled device registry (contains token digests)
 backend/data/collector_registry.json
-venv/
-.venv/
-/backend/data/cases_store.json
-/backend/data/collector_registry_telemetry_stats.json

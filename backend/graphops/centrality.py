@@ -10,31 +10,28 @@ from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from collections import deque, defaultdict
 import logging
-import threading
+import time
 
 from backend.graphops.client import Neo4jClient, get_graphops_client
 from backend.graphops.schema import NodeLabel, CriticalityTier
 
 logger = logging.getLogger("threatlens.graphops.centrality")
 
-# Thread-safe in-memory cache for graph centrality results
-_centrality_cache_lock = threading.Lock()
-_centrality_cache: Optional["CentralityAnalysisResult"] = None
-_centrality_cache_key: Optional[str] = None
-_centrality_cache_timestamp: Optional[str] = None
+# Dual-tier Centrality Cache (60s TTL)
+_CENTRALITY_CACHE: Dict[str, Any] = {
+    "timestamp": 0.0,
+    "top_k": 0,
+    "result": None,
+    "ttl": 60.0,
+}
 
 
-def invalidate_centrality_cache() -> None:
-    """
-    Invalidates the in-memory graph centrality analytics cache.
-    Must be called whenever graph topology changes occur (ingestion, new nodes, provisioned devices).
-    """
-    global _centrality_cache, _centrality_cache_key, _centrality_cache_timestamp
-    with _centrality_cache_lock:
-        _centrality_cache = None
-        _centrality_cache_key = None
-        _centrality_cache_timestamp = None
-    logger.info("Centrality analytics cache successfully invalidated.")
+def invalidate_centrality_cache():
+    """Invalidates the in-memory backend centrality calculation cache."""
+    global _CENTRALITY_CACHE
+    _CENTRALITY_CACHE["timestamp"] = 0.0
+    _CENTRALITY_CACHE["result"] = None
+    logger.info("Backend centrality cache invalidated.")
 
 
 class CentralityNodeMetric(BaseModel):
@@ -60,46 +57,29 @@ class CentralityAnalysisResult(BaseModel):
     top_disruption_nodes: List[CentralityNodeMetric] = Field(description="Nodes sorted descending by composite disruption score")
     network_bridge_nodes: List[CentralityNodeMetric] = Field(description="Nodes sorted descending by Betweenness centrality")
     executive_summary: str = Field(description="Analyst narrative summarizing high-centrality choke points")
-    cached: bool = Field(default=False, description="Whether this result was served from the in-memory cache")
-    cache_timestamp: Optional[str] = Field(default=None, description="Timestamp when the cached metrics were generated")
-    methodology_disclaimer: str = Field(
-        default=(
-            "High PageRank and betweenness centrality reflect structural authority, connectivity density, "
-            "and topological routing importance within the enterprise graph. They indicate structural importance "
-            "and potential lateral movement choke points, NOT confirmed compromise or malicious activity."
-        ),
-        description="Analytical guidance on interpreting centrality scores"
-    )
+    top_betweenness_node: Optional[str] = Field(default=None, description="Identifier of highest betweenness choke point")
+    top_pagerank_node: Optional[str] = Field(default=None, description="Identifier of highest PageRank authority node")
 
 
 class CentralityAnalyticsService:
     """
     Computes PageRank and Betweenness Centrality over the enterprise knowledge graph
     to identify high-value targets, critical bridges, and lateral pivot hubs.
-    Supports thread-safe result caching and cache invalidation after topology changes.
     """
 
     def __init__(self, client: Optional[Neo4jClient] = None):
         self.client = client or get_graphops_client()
 
-    def invalidate_cache(self) -> None:
-        """Invalidates the centrality metrics cache."""
-        invalidate_centrality_cache()
-
     def analyze_graph_centrality(self, top_k: int = 10, force_refresh: bool = False) -> CentralityAnalysisResult:
         """
         Executes PageRank (power iteration) and Betweenness Centrality (Brandes' algorithm)
-        across the live Neo4j topology. Uses cached results if available unless force_refresh is True.
+        across the live Neo4j topology. Uses 60s cached results unless force_refresh is True.
         """
-        global _centrality_cache, _centrality_cache_key, _centrality_cache_timestamp
-        cache_key = f"top_k_{top_k}"
-        if not force_refresh:
-            with _centrality_cache_lock:
-                if _centrality_cache is not None and _centrality_cache_key == cache_key:
-                    cached_result = _centrality_cache.model_copy()
-                    cached_result.cached = True
-                    cached_result.cache_timestamp = _centrality_cache_timestamp
-                    return cached_result
+        now = time.time()
+        if not force_refresh and _CENTRALITY_CACHE["result"] is not None:
+            if (now - _CENTRALITY_CACHE["timestamp"]) < _CENTRALITY_CACHE["ttl"] and _CENTRALITY_CACHE["top_k"] >= top_k:
+                logger.info("Serving cached centrality analytics result (age=%.1fs)", now - _CENTRALITY_CACHE["timestamp"])
+                return _CENTRALITY_CACHE["result"]
         # 1. Fetch live nodes and edges from Neo4j (with in-memory fallback)
         try:
             node_records = self.client.execute_query(
@@ -272,24 +252,26 @@ class CentralityAnalyticsService:
             f"will eliminate the largest percentage of adversary attack routes prior to exploitation."
         )
 
-        now_iso = datetime.now(timezone.utc).isoformat()
-        res = CentralityAnalysisResult(
-            timestamp=now_iso,
+        top_bw_id = top_bridges[0].node_id if top_bridges else None
+        top_pr_node = sorted(node_metrics, key=lambda m: m.pagerank, reverse=True)
+        top_pr_id = top_pr_node[0].node_id if top_pr_node else None
+
+        result = CentralityAnalysisResult(
             total_nodes_analyzed=total_nodes,
             total_edges_analyzed=valid_edges_count,
             top_disruption_nodes=top_disruption,
             network_bridge_nodes=top_bridges,
             executive_summary=summary,
-            cached=False,
-            cache_timestamp=now_iso,
+            top_betweenness_node=top_bw_id,
+            top_pagerank_node=top_pr_id,
         )
 
-        with _centrality_cache_lock:
-            _centrality_cache = res
-            _centrality_cache_key = cache_key
-            _centrality_cache_timestamp = now_iso
+        # Cache result
+        _CENTRALITY_CACHE["timestamp"] = time.time()
+        _CENTRALITY_CACHE["top_k"] = top_k
+        _CENTRALITY_CACHE["result"] = result
 
-        return res
+        return result
 
 
 def get_centrality_service(client: Optional[Neo4jClient] = None) -> CentralityAnalyticsService:

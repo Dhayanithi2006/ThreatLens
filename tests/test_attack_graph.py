@@ -280,6 +280,11 @@ async def run_all_tests_async():
     print("=" * 65)
 
 
+def test_feature6_attack_graph_and_campaign_correlation():
+    """Pytest entrypoint executing the 12 Feature 6 attack graph & campaign correlation tests."""
+    asyncio.run(run_all_tests_async())
+
+
 def main():
     asyncio.run(run_all_tests_async())
 

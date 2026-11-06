@@ -426,18 +426,6 @@ class SpoolManager:
     def get_spooled_files(self) -> List[Path]:
         return sorted(self._dir.glob("spool_[0-9]*.json"))
 
-    def get_pending_count(self) -> int:
-        """Returns the total number of pending events in active offline spool files."""
-        files = self.get_spooled_files()
-        total = 0
-        for f in files:
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                total += len(data.get("events", []))
-            except Exception:
-                pass
-        return total
-
     def drain(self, submit_fn: Callable[[List[Dict[str, Any]], Optional[int]], bool]) -> int:
         """
         Drains spooled batches in FIFO order using submit_fn.
@@ -722,7 +710,6 @@ def submit_events(
     checkpoint_offset: Optional[int],
     logger: logging.Logger,
     insecure_dev_allowed: bool = False,
-    pending_spool_events: Optional[int] = None,
 ) -> bool:
     """
     POSTs a batch of events to ThreatLens HTTPS ingestion endpoint.
@@ -747,13 +734,10 @@ def submit_events(
         return False
 
     url = server_url.rstrip("/") + DEFAULT_ENDPOINT_PATH
-    payload_data: Dict[str, Any] = {
+    body = json.dumps({
         "events": events,
         "checkpoint_offset": checkpoint_offset,
-    }
-    if pending_spool_events is not None:
-        payload_data["pending_spool_events"] = pending_spool_events
-    body = json.dumps(payload_data).encode("utf-8")
+    }).encode("utf-8")
 
     req = urllib.request.Request(
         url,
@@ -918,7 +902,6 @@ class CollectorAgent:
                 self._checkpoint.update(channel, rid)
 
     def _do_submit(self, events: List[Dict[str, Any]], checkpoint_offset: Optional[int]) -> bool:
-        pending_spool = self._spool.get_pending_count()
         return submit_events(
             server_url=self._cfg["server_url"],
             collector_id=self._cfg["collector_id"],
@@ -929,7 +912,6 @@ class CollectorAgent:
             checkpoint_offset=checkpoint_offset,
             logger=self._logger,
             insecure_dev_allowed=self._insecure_dev_only,
-            pending_spool_events=pending_spool,
         )
 
     def run_once(self) -> int:

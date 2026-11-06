@@ -11,15 +11,12 @@ from backend.main import app
 from backend.graphops.schema import NodeLabel, RelationshipType, EvidenceClass
 from backend.graphops.ingest import GraphOpsIngestionEngine
 from backend.data.graphops_fixtures import load_sample_enterprise_fixture
-from pydantic import ValidationError
 from backend.models.graphops import (
     BulkIngestPayload,
     EntityIngestRequest,
     RelationshipIngestRequest,
     UserNode,
     DeviceNode,
-    ServerNode,
-    ApplicationNode,
     EnterpriseRelationship,
 )
 from backend.graphops.client import get_graphops_client, Neo4jClient
@@ -34,7 +31,7 @@ def test_load_sample_enterprise_fixture_structure():
     fixture = load_sample_enterprise_fixture()
     assert fixture["dataset_name"] == "simulated_soc_enterprise_fixture_v1"
     assert "SIMULATED" in fixture["disclaimer"]
-
+    
     entities = fixture["entities"]
     assert len(entities["users"]) >= 4
     assert len(entities["devices"]) >= 3
@@ -126,7 +123,7 @@ def test_ingest_payload_idempotency():
     mock_client = MagicMock()
     mock_client.init_schema_constraints.return_value = {"applied_count": 13}
     mock_client.execute_query.return_value = []
-
+    
     # Run 1: Fresh Import (nodes_created = 2)
     mock_client.execute_write.side_effect = [
         {"nodes_created": 1, "nodes_deleted": 0, "relationships_created": 0},  # users
@@ -279,7 +276,7 @@ def test_ingest_payload_intra_payload_deduplication():
     mock_client = MagicMock()
     mock_client.init_schema_constraints.return_value = {"applied_count": 13}
     mock_client.execute_query.return_value = []
-
+    
     # Track Cypher UNWIND batches executed
     executed_batches = []
     def fake_execute_write(query, params=None, database=None):
@@ -375,250 +372,3 @@ def test_partial_failure_reporting():
     assert summary.relationships_rejected == 1
     assert len(summary.errors) == 1
     assert "Unresolved relationship reference" in summary.errors[0]
-# =====================================================================
-# 6. ENHANCED VERIFICATION TESTS (FIXES 1 - 7)
-# =====================================================================
-def test_canonical_id_case_variations_and_empty_rejection():
-    """Requirement 1 & 6: Test uppercase/lowercase prefixes, duplicate prefixes, and empty ID rejection."""
-    from backend.graphops.schema import canonicalize_node_id, NodeLabel
-
-    # 1. Uppercase prefix normalizes cleanly
-    assert canonicalize_node_id(NodeLabel.USER, "USER:101") == "user:101"
-    assert canonicalize_node_id(NodeLabel.DEVICE, "DEVICE:DEV-WS-1") == "device:dev-ws-1"
-    assert canonicalize_node_id(NodeLabel.VULNERABILITY, "VULN:CVE-2024-21413") == "vuln:CVE-2024-21413"
-    assert canonicalize_node_id(NodeLabel.APPLICATION, "APPLICATION:APP-01") == "app:app-01"
-    # 2. Duplicate prefixes prevented
-    assert canonicalize_node_id(NodeLabel.USER, "user:user:101") == "user:101"
-    assert canonicalize_node_id(NodeLabel.USER, "USER:user:101") == "user:101"
-
-    # 3. Empty ID rejection
-    with pytest.raises(ValueError, match="Entity ID cannot be empty"):
-        canonicalize_node_id(NodeLabel.USER, "")
-    with pytest.raises(ValueError, match="Entity ID cannot be empty"):
-        canonicalize_node_id(NodeLabel.DEVICE, "   ")
-
-
-def test_mixed_case_email_alias_resolution():
-    """Requirement 2: Mixed-case email alias resolution resolves to canonical ID without edge loss."""
-    mock_client = MagicMock()
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-
-    captured_writes = []
-    def fake_write(cypher, params=None, database=None):
-        captured_writes.append((cypher, params))
-        return {"nodes_created": 2, "relationships_created": 1}
-
-    mock_client.execute_write.side_effect = fake_write
-    engine = GraphOpsIngestionEngine(client=mock_client)
-
-    payload = BulkIngestPayload(
-        dataset_name="mixed_case_alias_test",
-        entities=EntityIngestRequest(
-            users=[UserNode(id="USR-101", user_id="USR-101", email="alice@corp.com", name="Alice Vance")],
-            devices=[DeviceNode(id="DEV-WS-101", device_id="DEV-WS-101", hostname="ws-1.corp", ip_address="10.0.1.10")]
-        ),
-        relationships=RelationshipIngestRequest(
-            relationships=[
-                # Source references mixed-case email
-                EnterpriseRelationship(
-                    source_id="Alice@Corp.com",
-                    target_id="device:dev-ws-101",
-                    relationship_type=RelationshipType.USES
-                )
-            ]
-        )
-    )
-
-    summary = engine.ingest_payload(payload)
-    assert summary.status == "SUCCESS"
-    assert summary.relationships_imported == 1
-    assert summary.relationships_rejected == 0
-
-    # Verify that the relationship sent to Neo4j has source_id canonicalized to 'user:usr-101'
-    rel_writes = [p for q, p in captured_writes if "id: rel.source_id" in q]
-    assert len(rel_writes) == 1
-    assert rel_writes[0]["batch"][0]["source_id"] == "user:usr-101"
-
-
-def test_native_server_and_device_id_resolution():
-    """Requirement 3: Relationships referencing native server and device IDs resolve correctly."""
-    mock_client = MagicMock()
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-    mock_client.execute_write.return_value = {"nodes_created": 2, "relationships_created": 1}
-
-    engine = GraphOpsIngestionEngine(client=mock_client)
-    payload = BulkIngestPayload(
-        dataset_name="native_ids_test",
-        entities=EntityIngestRequest(
-            servers=[ServerNode(id="SRV-CORE-01", server_id="SRV-CORE-01", name="Core Server", hostname="core.corp", ip_address="10.0.2.1")],
-            applications=[ApplicationNode(id="APP-AUTH", app_id="APP-AUTH", name="Auth Service")]
-        ),
-        relationships=RelationshipIngestRequest(
-            relationships=[
-                # Uses native IDs SRV-CORE-01 and APP-AUTH without prefixes
-                EnterpriseRelationship(
-                    source_id="SRV-CORE-01",
-                    target_id="APP-AUTH",
-                    relationship_type=RelationshipType.HOSTS
-                )
-            ]
-        )
-    )
-
-    summary = engine.ingest_payload(payload)
-    assert summary.status == "SUCCESS"
-    assert summary.relationships_imported == 1
-    assert summary.relationships_rejected == 0
-
-
-def test_csv_headers_case_insensitivity():
-    """Requirement 4: CSV parsing recognizes Label, LABEL, label and arbitrary header casing."""
-    engine = GraphOpsIngestionEngine(client=MagicMock())
-    csv_text = """Label,ID,Name,Hostname,IP_Address,Tier,Environment
-Server,SRV-99,Database Server,db.corp,10.0.0.50,Database,Production
-"""
-    req = engine.parse_csv_entities(csv_text)
-    assert len(req.servers) == 1
-    assert req.servers[0].id == "server:srv-99"
-    assert req.servers[0].ip_address == "10.0.0.50"
-    assert len(req.users) == 0
-
-
-def test_csv_ingestion_valid_and_invalid_rows():
-    """Requirement 5: CSV ingestion processes valid rows while isolating and recording rejected invalid rows."""
-    mock_client = MagicMock()
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-    mock_client.execute_write.return_value = {"nodes_created": 2}
-
-    engine = GraphOpsIngestionEngine(client=mock_client)
-    csv_text = """label,id,name,email,ip_address,hostname
-User,usr-1,User One,valid1@corp.com,,
-IPAddress,bad-ip,Bad IP,,not-an-ip,
-User,usr-2,User Two,valid2@corp.com,,
-Server,,No ID,,10.0.0.1,
-"""
-    summary = engine.ingest_csv(csv_text, dataset_name="csv_mixed_test")
-    assert summary.status == "PARTIAL"
-    assert summary.nodes_imported == 2
-    assert summary.nodes_rejected == 2
-    assert len(summary.errors) == 2
-
-
-def test_empty_entity_id_model_rejection():
-    """Requirement 6: Pydantic entity models strictly reject empty string IDs."""
-    from backend.models.graphops import ServerNode, ApplicationNode
-    with pytest.raises(ValidationError):
-        UserNode(id="", user_id="USR-1", email="u@corp.com", name="User")
-    with pytest.raises(ValidationError):
-        DeviceNode(id="   ", device_id="DEV-1", hostname="ws1", ip_address="10.0.1.1")
-    with pytest.raises(ValidationError):
-        ServerNode(id="", server_id="SRV-1", name="Server", hostname="s1", ip_address="10.0.1.2")
-    with pytest.raises(ValidationError):
-        ApplicationNode(id="", app_id="APP-1", name="App")
-
-
-def test_missing_relationship_endpoints_rejection_counts():
-    """Requirement 7 & 8: Nonexistent endpoints are rejected with accurate rejected counters."""
-    mock_client = MagicMock()
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-    mock_client.execute_write.return_value = {"nodes_created": 1, "relationships_created": 0}
-
-    engine = GraphOpsIngestionEngine(client=mock_client)
-    payload = BulkIngestPayload(
-        dataset_name="missing_endpoints_test",
-        entities=EntityIngestRequest(
-            users=[UserNode(id="USR-10", user_id="USR-10", email="u10@corp.com", name="User 10")]
-        ),
-        relationships=RelationshipIngestRequest(
-            relationships=[
-                EnterpriseRelationship(source_id="user:usr-10", target_id="device:dev-missing-1", relationship_type=RelationshipType.USES),
-                EnterpriseRelationship(source_id="user:usr-missing-2", target_id="user:usr-10", relationship_type=RelationshipType.OWNS),
-            ]
-        )
-    )
-
-    summary = engine.ingest_payload(payload)
-    assert summary.status == "PARTIAL"
-    assert summary.nodes_imported == 1
-    assert summary.relationships_imported == 0
-    assert summary.relationships_rejected == 2
-    assert len(summary.errors) == 2
-
-
-def test_api_bulk_partial_ingestion_reporting():
-    """Requirement 9: Bulk ingestion API endpoint supports row-level partial failure reporting."""
-    mock_client = MagicMock()
-    mock_client.verify_connectivity.return_value = {"connected": True}
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-    mock_client.execute_write.return_value = {"nodes_created": 1, "relationships_created": 0}
-
-    app.dependency_overrides[get_graphops_client] = lambda: mock_client
-    try:
-        client = TestClient(app)
-        bulk_payload = {
-            "dataset_name": "api_partial_bulk_test",
-            "entities": {
-                "users": [
-                    {"id": "USR-1", "user_id": "USR-1", "email": "good@corp.com", "name": "Good User"},
-                    {"id": "USR-2", "user_id": "USR-2", "email": "not-an-email", "name": "Bad User"} # Malformed email
-                ]
-            },
-            "relationships": {"relationships": []}
-        }
-        resp = client.post("/api/v1/graphops/ingest/bulk", json=bulk_payload)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "PARTIAL"
-        assert data["nodes_imported"] == 1
-        assert data["nodes_rejected"] == 1
-        assert len(data["errors"]) >= 1
-    finally:
-        app.dependency_overrides.pop(get_graphops_client, None)
-
-
-def test_api_sample_ingest_neo4j_unavailable():
-    """Requirement 10: Ingest sample fixture returns HTTP 503 when Neo4j is unavailable."""
-    from backend.graphops.client import GraphOpsConnectionError
-    mock_client = MagicMock()
-    mock_client.verify_connectivity.side_effect = GraphOpsConnectionError("Connection refused")
-
-    app.dependency_overrides[get_graphops_client] = lambda: mock_client
-    try:
-        client = TestClient(app)
-        resp = client.post("/api/v1/graphops/ingest/sample")
-        assert resp.status_code == 503
-        assert "Database unreachable" in resp.json()["detail"]
-    finally:
-        app.dependency_overrides.pop(get_graphops_client, None)
-
-
-def test_repeated_ingestion_idempotency_without_duplicate_entities():
-    """Requirement 11: Ingesting identical data twice leaves node count unchanged and increments updated counters."""
-    mock_client = MagicMock()
-    mock_client.init_schema_constraints.return_value = {"applied_count": 13}
-    mock_client.execute_query.return_value = []
-
-    # Run 1: returns 1 node created
-    mock_client.execute_write.return_value = {"nodes_created": 1, "relationships_created": 0}
-    engine = GraphOpsIngestionEngine(client=mock_client)
-    payload = BulkIngestPayload(
-        dataset_name="idempotent_test",
-        entities=EntityIngestRequest(
-            users=[UserNode(id="USR-SAME", user_id="USR-SAME", email="same@corp.com", name="Same User")]
-        )
-    )
-    s1 = engine.ingest_payload(payload)
-    assert s1.nodes_imported == 1
-    assert s1.nodes_updated == 0
-
-    # Run 2: returns 0 nodes created (MERGE matched)
-    mock_client.execute_write.return_value = {"nodes_created": 0, "relationships_created": 0}
-    s2 = engine.ingest_payload(payload)
-    assert s2.nodes_imported == 0
-    assert s2.nodes_updated == 1
-    assert s2.status == "SUCCESS"

@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-10-28T11:14:04.439127+00:00",
+  "timestamp": "2026-11-06T19:22:02.987792+00:00",
   "total_tests": 65,
-  "passed_tests": 65,
-  "failed_tests": 0,
-  "pass_rate": 100.0,
+  "passed_tests": 56,
+  "failed_tests": 9,
+  "pass_rate": 86.2,
   "results": [
     {
       "group": "Core",
       "submodule": "backend.core.config",
       "test_name": "Settings load and live service URIs",
       "passed": true,
-      "duration_ms": 50.15,
+      "duration_ms": 89.55,
       "details": "Neo4j: bolt://localhost:7687, Kafka: localhost:9092",
       "live": true
     },
@@ -19,7 +19,7 @@
       "submodule": "backend.core.security",
       "test_name": "API key extraction & HMAC admin authorization",
       "passed": true,
-      "duration_ms": 1537.17,
+      "duration_ms": 1185.13,
       "details": "Actor: admin-api-key",
       "live": true
     },
@@ -28,7 +28,7 @@
       "submodule": "email_forensics",
       "test_name": "RFC 822 parsing, SPF/DKIM/DMARC & relay hops",
       "passed": true,
-      "duration_ms": 107.87,
+      "duration_ms": 130.05,
       "details": "3 hops, SPF=pass, DMARC=fail",
       "live": true
     },
@@ -37,7 +37,7 @@
       "submodule": "ioc_extractor",
       "test_name": "Regex and MIME indicator extraction",
       "passed": true,
-      "duration_ms": 50.6,
+      "duration_ms": 96.92,
       "details": "7 domains, 3 IPs, 1 URLs",
       "live": true
     },
@@ -46,7 +46,7 @@
       "submodule": "threat_intelligence",
       "test_name": "Threat intel aggregation & caching",
       "passed": true,
-      "duration_ms": 544.58,
+      "duration_ms": 1095.64,
       "details": "Analyzed 9 IoCs (malicious: 4, clean: 4)",
       "live": true
     },
@@ -55,7 +55,7 @@
       "submodule": "threat_detection",
       "test_name": "Rule-based & multi-signal threat scoring",
       "passed": true,
-      "duration_ms": 15.68,
+      "duration_ms": 18.84,
       "details": "Score: 100, Level: CRITICAL, Primary: PHISHING",
       "live": true
     },
@@ -64,7 +64,7 @@
       "submodule": "explainable_ai",
       "test_name": "LIME/SHAP feature explanation & MITRE ATT&CK mapping",
       "passed": true,
-      "duration_ms": 14.36,
+      "duration_ms": 14.79,
       "details": "12 risk factors, 5 top reasons",
       "live": true
     },
@@ -73,7 +73,7 @@
       "submodule": "case_store",
       "test_name": "Case repository lifecycle & query",
       "passed": true,
-      "duration_ms": 29.51,
+      "duration_ms": 17.17,
       "details": "5 indexed cases; MT-101 retrieved successfully",
       "live": true
     },
@@ -82,7 +82,7 @@
       "submodule": "campaign_correlation",
       "test_name": "Multi-case infrastructure clustering",
       "passed": true,
-      "duration_ms": 3.27,
+      "duration_ms": 1.37,
       "details": "Found 1 campaigns (e.g. CMP-001 with cases: ['MT-101', 'MT-103', 'MT-102'])",
       "live": true
     },
@@ -91,7 +91,7 @@
       "submodule": "attack_graph",
       "test_name": "Local email attack graph & SMTP relay assembly",
       "passed": true,
-      "duration_ms": 2.91,
+      "duration_ms": 1.86,
       "details": "12 nodes, 14 edges assembled",
       "live": true
     },
@@ -99,9 +99,9 @@
       "group": "GraphOps",
       "submodule": "client.py",
       "test_name": "Neo4j Bolt driver & Cypher transaction",
-      "passed": true,
-      "duration_ms": 3852.6,
-      "details": "Live Bolt connected; 61 nodes in Neo4j",
+      "passed": false,
+      "duration_ms": 6009.56,
+      "details": "",
       "live": true
     },
     {
@@ -109,7 +109,7 @@
       "submodule": "schema.py",
       "test_name": "Canonical node identifiers & relationship enums",
       "passed": true,
-      "duration_ms": 0.06,
+      "duration_ms": 0.02,
       "details": "user:usr-101, device:dev-ws-101 verified",
       "live": true
     },
@@ -117,27 +117,27 @@
       "group": "GraphOps",
       "submodule": "dijkstra.py",
       "test_name": "Lowest-friction lateral path algorithm",
-      "passed": true,
-      "duration_ms": 186.97,
-      "details": "Path found (cost 2.8 over 2 hops)",
+      "passed": false,
+      "duration_ms": 4220.29,
+      "details": "Failed to connect to Neo4j during query execution: Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\nTimed out trying to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0))\nTimed out trying to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687))",
       "live": true
     },
     {
       "group": "GraphOps",
       "submodule": "attack_paths.py",
       "test_name": "DFS candidate attack path discovery",
-      "passed": true,
-      "duration_ms": 39.3,
-      "details": "10 lateral paths found to Crown Jewels",
+      "passed": false,
+      "duration_ms": 4020.11,
+      "details": "Failed to connect to Neo4j during query execution: Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\nTimed out trying to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0))\nTimed out trying to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687))",
       "live": true
     },
     {
       "group": "GraphOps",
       "submodule": "blast_radius.py",
       "test_name": "Multi-hop BFS blast radius calculation",
-      "passed": true,
-      "duration_ms": 45.09,
-      "details": "34 reachable entities at 3 hops",
+      "passed": false,
+      "duration_ms": 4012.65,
+      "details": "Failed to connect to Neo4j during query execution: Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\nTimed out trying to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0))\nTimed out trying to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687))",
       "live": true
     },
     {
@@ -145,8 +145,8 @@
       "submodule": "communities.py",
       "test_name": "Graph community detection & critical asset density",
       "passed": true,
-      "duration_ms": 46.53,
-      "details": "5 communities, 6 critical assets evaluated",
+      "duration_ms": 223.29,
+      "details": "5 communities, 8 critical assets evaluated",
       "live": true
     },
     {
@@ -154,7 +154,7 @@
       "submodule": "alert_consolidation.py",
       "test_name": "Incident timeline narrative synthesis",
       "passed": true,
-      "duration_ms": 21.38,
+      "duration_ms": 343.46,
       "details": "5 chronological narrative steps synthesized",
       "live": true
     },
@@ -163,7 +163,7 @@
       "submodule": "attack_paths.py (Bridge)",
       "test_name": "Case bridging & epistemological safety preservation",
       "passed": true,
-      "duration_ms": 18.64,
+      "duration_ms": 4024.06,
       "details": "Disclaimer verified: 'RECEIPT IS NOT COMPROMISE: Del...'",
       "live": true
     },
@@ -172,7 +172,7 @@
       "submodule": "feature_extractor.py",
       "test_name": "Feature extraction from SecurityEventEnvelope",
       "passed": true,
-      "duration_ms": 3.97,
+      "duration_ms": 15.01,
       "details": "Extracted feature record for EVT-SAMPLE-VERIFY-001",
       "live": true
     },
@@ -181,7 +181,7 @@
       "submodule": "ml_service.py",
       "test_name": "Scikit-Learn Isolation Forest active inference",
       "passed": true,
-      "duration_ms": 2965.64,
+      "duration_ms": 2027.08,
       "details": "Normalized Score: 47.0, trained on 979 samples",
       "live": true
     },
@@ -190,8 +190,8 @@
       "submodule": "pyg_service.py",
       "test_name": "PyG GraphSAGE 2-layer GNN link plausibility",
       "passed": true,
-      "duration_ms": 18297.74,
-      "details": "Score: 6.66, Plausibility: 0.9334",
+      "duration_ms": 27103.39,
+      "details": "Score: 6.71, Plausibility: 0.9329",
       "live": true
     },
     {
@@ -199,26 +199,26 @@
       "submodule": "kafka_producer.py",
       "test_name": "Kafka producer broker connection",
       "passed": true,
-      "duration_ms": 1058.72,
-      "details": "Broker: localhost:9092 (mode: False)",
+      "duration_ms": 2023.74,
+      "details": "Broker: localhost:9092 (mode: True)",
       "live": true
     },
     {
       "group": "Kafka",
       "submodule": "kafka_worker.py",
       "test_name": "Lifespan consumer worker running loop",
-      "passed": true,
-      "duration_ms": 4208.38,
-      "details": "Live Consumer: running=True, broker=True, processed=0",
+      "passed": false,
+      "duration_ms": 129.95,
+      "details": "",
       "live": true
     },
     {
       "group": "Kafka",
       "submodule": "kafka_processor.py",
       "test_name": "Live Publish -> Broker -> Worker -> Neo4j mutation",
-      "passed": true,
-      "duration_ms": 289.8,
-      "details": "Event EVT-LIVE-VERIFY-898410C2 persisted in Neo4j live",
+      "passed": false,
+      "duration_ms": 4128.85,
+      "details": "Failed to connect to Neo4j during query execution: Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\nTimed out trying to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0))\nTimed out trying to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687))",
       "live": true
     },
     {
@@ -226,7 +226,7 @@
       "submodule": "catalog.py & policies.py",
       "test_name": "24 Controls & 6 Policies loaded",
       "passed": true,
-      "duration_ms": 35.93,
+      "duration_ms": 42.59,
       "details": "24 controls, 6 policies",
       "live": true
     },
@@ -235,7 +235,7 @@
       "submodule": "evaluator.py",
       "test_name": "Live graph policy evaluation",
       "passed": true,
-      "duration_ms": 2.75,
+      "duration_ms": 1.65,
       "details": "Evaluated 6 policies across live Neo4j topology",
       "live": true
     },
@@ -244,8 +244,8 @@
       "submodule": "audit.py",
       "test_name": "Cryptographic SHA-256 audit ledger verification",
       "passed": true,
-      "duration_ms": 2.9,
-      "details": "1 audit records verified tamper-free (head hash: 62da5b3e4d7d8535...)",
+      "duration_ms": 1.89,
+      "details": "1 audit records verified tamper-free (head hash: 0c3be6706afeac18...)",
       "live": true
     },
     {
@@ -253,7 +253,7 @@
       "submodule": "/api/v1/health",
       "test_name": "Core health endpoint",
       "passed": true,
-      "duration_ms": 31.75,
+      "duration_ms": 3.05,
       "details": "HTTP 200",
       "live": true
     },
@@ -262,7 +262,7 @@
       "submodule": "/api/v1/analyze/threat",
       "test_name": "Analyze threat endpoint",
       "passed": true,
-      "duration_ms": 26.56,
+      "duration_ms": 7.74,
       "details": "HTTP 200",
       "live": true
     },
@@ -271,7 +271,7 @@
       "submodule": "/api/v1/analyze/explain",
       "test_name": "Analyze explain endpoint",
       "passed": true,
-      "duration_ms": 23.54,
+      "duration_ms": 6.04,
       "details": "HTTP 200",
       "live": true
     },
@@ -280,7 +280,7 @@
       "submodule": "/api/v1/analyze/forensics",
       "test_name": "Analyze forensics raw EML endpoint",
       "passed": true,
-      "duration_ms": 66.19,
+      "duration_ms": 25.56,
       "details": "HTTP 200",
       "live": true
     },
@@ -289,7 +289,7 @@
       "submodule": "/api/v1/analyze/iocs",
       "test_name": "Analyze IOCs endpoint",
       "passed": true,
-      "duration_ms": 43.54,
+      "duration_ms": 16.88,
       "details": "HTTP 200",
       "live": true
     },
@@ -298,7 +298,7 @@
       "submodule": "/api/v1/analyze/intelligence",
       "test_name": "Analyze threat intelligence endpoint",
       "passed": true,
-      "duration_ms": 16.66,
+      "duration_ms": 28.65,
       "details": "HTTP 200",
       "live": true
     },
@@ -307,7 +307,7 @@
       "submodule": "/api/v1/analyze/eml",
       "test_name": "Complete EML analysis pipeline endpoint",
       "passed": true,
-      "duration_ms": 50.12,
+      "duration_ms": 52.98,
       "details": "HTTP 200",
       "live": true
     },
@@ -316,7 +316,7 @@
       "submodule": "/api/v1/cases",
       "test_name": "List cases endpoint",
       "passed": true,
-      "duration_ms": 6.75,
+      "duration_ms": 3.47,
       "details": "HTTP 200",
       "live": true
     },
@@ -325,7 +325,7 @@
       "submodule": "/api/v1/cases/MT-101/graph",
       "test_name": "Case MT-101 attack graph endpoint",
       "passed": true,
-      "duration_ms": 6.88,
+      "duration_ms": 18.16,
       "details": "HTTP 200",
       "live": true
     },
@@ -334,7 +334,7 @@
       "submodule": "/api/v1/campaigns",
       "test_name": "List campaigns endpoint",
       "passed": true,
-      "duration_ms": 5.16,
+      "duration_ms": 8.67,
       "details": "HTTP 200",
       "live": true
     },
@@ -343,7 +343,7 @@
       "submodule": "/api/v1/search/ioc?q=185.190.140.22",
       "test_name": "Cross-investigation IoC search",
       "passed": true,
-      "duration_ms": 5.1,
+      "duration_ms": 6.39,
       "details": "HTTP 200",
       "live": true
     },
@@ -352,7 +352,7 @@
       "submodule": "/api/v1/demo-emails",
       "test_name": "Demo emails fixture endpoint",
       "passed": true,
-      "duration_ms": 5.21,
+      "duration_ms": 8.3,
       "details": "HTTP 200",
       "live": true
     },
@@ -361,7 +361,7 @@
       "submodule": "/api/v1/demo-emls",
       "test_name": "Demo RFC 822 EML fixtures endpoint",
       "passed": true,
-      "duration_ms": 7.82,
+      "duration_ms": 32.31,
       "details": "HTTP 200",
       "live": true
     },
@@ -369,18 +369,18 @@
       "group": "API",
       "submodule": "/api/v1/graphops/health",
       "test_name": "GraphOps Neo4j health endpoint",
-      "passed": true,
-      "duration_ms": 2076.65,
-      "details": "HTTP 200",
+      "passed": false,
+      "duration_ms": 8.76,
+      "details": "Expected 200, got 503: {'detail': {'message': 'GraphOps database connection is unavailable.', 'database': 'neo4j', 'status': 'unhealthy', 'connected': False, 'error': 'Neo4j service unavailable at bolt://localhost:7687'}}",
       "live": true
     },
     {
       "group": "API",
       "submodule": "/api/v1/graphops/summary",
       "test_name": "GraphOps topology summary endpoint",
-      "passed": true,
-      "duration_ms": 54.89,
-      "details": "HTTP 200",
+      "passed": false,
+      "duration_ms": 4036.77,
+      "details": "Expected 200, got 503: {'detail': \"Cannot fetch graph summary: Failed to connect to Neo4j during query execution: Couldn't connect to localhost:7687 (resolved to ('[::1]:7687', '127.0.0.1:7687')):\\nTimed out trying to establish connection to ResolvedIPv6Address(('::1', 7687, 0, 0))\\nTimed out trying to establish connection to ResolvedIPv4Address(('127.0.0.1', 7687))\"}",
       "live": true
     },
     {
@@ -388,7 +388,7 @@
       "submodule": "/api/v1/graphops/dijkstra",
       "test_name": "Dijkstra shortest path endpoint",
       "passed": true,
-      "duration_ms": 45.33,
+      "duration_ms": 4017.06,
       "details": "HTTP 200",
       "live": true
     },
@@ -397,7 +397,7 @@
       "submodule": "/api/v1/graphops/attack-paths",
       "test_name": "DFS attack paths endpoint",
       "passed": true,
-      "duration_ms": 257.52,
+      "duration_ms": 4031.93,
       "details": "HTTP 200",
       "live": true
     },
@@ -406,7 +406,7 @@
       "submodule": "/api/v1/graphops/blast-radius",
       "test_name": "BFS blast radius endpoint",
       "passed": true,
-      "duration_ms": 52.55,
+      "duration_ms": 4047.05,
       "details": "HTTP 200",
       "live": true
     },
@@ -415,7 +415,7 @@
       "submodule": "/api/v1/graphops/choke-points",
       "test_name": "Choke points endpoint",
       "passed": true,
-      "duration_ms": 108.2,
+      "duration_ms": 8074.56,
       "details": "HTTP 200",
       "live": true
     },
@@ -424,7 +424,7 @@
       "submodule": "/api/v1/graphops/simulate-containment",
       "test_name": "What-If containment simulation",
       "passed": true,
-      "duration_ms": 72.83,
+      "duration_ms": 4055.17,
       "details": "HTTP 200",
       "live": true
     },
@@ -433,7 +433,7 @@
       "submodule": "/api/v1/graphops/bridge/case/MT-101",
       "test_name": "Case Bridge MT-101 endpoint",
       "passed": true,
-      "duration_ms": 34.48,
+      "duration_ms": 4059.31,
       "details": "HTTP 200",
       "live": true
     },
@@ -442,7 +442,7 @@
       "submodule": "/api/v1/graphops/communities",
       "test_name": "Community detection endpoint",
       "passed": true,
-      "duration_ms": 72.2,
+      "duration_ms": 18.27,
       "details": "HTTP 200",
       "live": true
     },
@@ -451,7 +451,7 @@
       "submodule": "/api/v1/graphops/incident-narrative/MT-101",
       "test_name": "Incident narrative endpoint",
       "passed": true,
-      "duration_ms": 41.92,
+      "duration_ms": 25.79,
       "details": "HTTP 200",
       "live": true
     },
@@ -460,7 +460,7 @@
       "submodule": "/api/v1/graphops/events/status",
       "test_name": "Kafka worker status endpoint",
       "passed": true,
-      "duration_ms": 5.23,
+      "duration_ms": 4.82,
       "details": "HTTP 200",
       "live": true
     },
@@ -469,7 +469,7 @@
       "submodule": "/api/v1/graphops/events/findings",
       "test_name": "Kafka findings list endpoint",
       "passed": true,
-      "duration_ms": 6.84,
+      "duration_ms": 24.67,
       "details": "HTTP 200",
       "live": true
     },
@@ -478,7 +478,7 @@
       "submodule": "/api/v1/graphops/events/ml/status",
       "test_name": "ML Isolation Forest status endpoint",
       "passed": true,
-      "duration_ms": 4.79,
+      "duration_ms": 34.14,
       "details": "HTTP 200",
       "live": true
     },
@@ -487,7 +487,7 @@
       "submodule": "/api/v1/graphops/events/ml/evaluate",
       "test_name": "ML Isolation Forest evaluate endpoint",
       "passed": true,
-      "duration_ms": 39.02,
+      "duration_ms": 130.45,
       "details": "HTTP 200",
       "live": true
     },
@@ -496,7 +496,7 @@
       "submodule": "/api/v1/graphops/events/pyg/status",
       "test_name": "PyG GraphSAGE status endpoint",
       "passed": true,
-      "duration_ms": 27.75,
+      "duration_ms": 8.38,
       "details": "HTTP 200",
       "live": true
     },
@@ -505,7 +505,7 @@
       "submodule": "/api/v1/graphops/events/pyg/evaluate",
       "test_name": "PyG link plausibility evaluate endpoint",
       "passed": true,
-      "duration_ms": 25.11,
+      "duration_ms": 68.98,
       "details": "HTTP 200",
       "live": true
     },
@@ -514,7 +514,7 @@
       "submodule": "/api/v1/governance/controls",
       "test_name": "Governance controls catalog endpoint",
       "passed": true,
-      "duration_ms": 10.35,
+      "duration_ms": 6.83,
       "details": "HTTP 200",
       "live": true
     },
@@ -523,7 +523,7 @@
       "submodule": "/api/v1/governance/policies",
       "test_name": "Governance policies endpoint",
       "passed": true,
-      "duration_ms": 8.14,
+      "duration_ms": 3.7,
       "details": "HTTP 200",
       "live": true
     },
@@ -532,7 +532,7 @@
       "submodule": "/api/v1/governance/evaluate",
       "test_name": "Governance policy evaluate endpoint",
       "passed": true,
-      "duration_ms": 8.47,
+      "duration_ms": 30.14,
       "details": "HTTP 200",
       "live": true
     },
@@ -541,7 +541,7 @@
       "submodule": "/api/v1/governance/audit",
       "test_name": "Audit trail list endpoint",
       "passed": true,
-      "duration_ms": 6.67,
+      "duration_ms": 2.94,
       "details": "HTTP 200",
       "live": true
     },
@@ -550,7 +550,7 @@
       "submodule": "/api/v1/governance/audit/verify",
       "test_name": "Cryptographic audit verify endpoint",
       "passed": true,
-      "duration_ms": 16.88,
+      "duration_ms": 31.3,
       "details": "HTTP 200",
       "live": true
     },
@@ -559,8 +559,8 @@
       "submodule": "/static/index.html",
       "test_name": "Single Page App HTML5 serving",
       "passed": true,
-      "duration_ms": 182.35,
-      "details": "HTTP 200, 167121 bytes",
+      "duration_ms": 25.02,
+      "details": "HTTP 200, 201123 bytes",
       "live": true
     },
     {
@@ -568,8 +568,8 @@
       "submodule": "/static/css/styles.css",
       "test_name": "Dark-Mode SOC CSS Stylesheet serving",
       "passed": true,
-      "duration_ms": 5.96,
-      "details": "HTTP 200, 34733 bytes",
+      "duration_ms": 24.06,
+      "details": "HTTP 200, 39626 bytes",
       "live": true
     },
     {
@@ -577,17 +577,17 @@
       "submodule": "/static/js/app.js",
       "test_name": "Frontend ES6 Application Logic serving",
       "passed": true,
-      "duration_ms": 6.85,
-      "details": "HTTP 200, 250013 bytes",
+      "duration_ms": 22.38,
+      "details": "HTTP 200, 365512 bytes",
       "live": true
     },
     {
       "group": "Frontend",
       "submodule": "index.html DOM",
       "test_name": "Phase 7 topbar indicators & 6 navigation views",
-      "passed": true,
-      "duration_ms": 7.73,
-      "details": "All 12 DOM IDs present in markup",
+      "passed": false,
+      "duration_ms": 14.38,
+      "details": "Missing DOM IDs: ['topbar-engine-indicator', 'topbar-db-indicator', 'topbar-kafka-indicator', 'topbar-ml-indicator', 'topbar-pyg-indicator']",
       "live": true
     }
   ]

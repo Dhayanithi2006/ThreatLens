@@ -480,14 +480,14 @@ The application enforces three distinct authentication schemes across its endpoi
 
 #### `GET /api/v1/graphops/communities`
 - **Handler**: `backend.api.graphops_routes.get_communities_endpoint`
-- **Summary / Purpose**: Executes security community detection across graph entities.
-- **Input Schema**: `client`: `<class 'backend.graphops.client.Neo4jClient'>` (Default: Depends(dependency=<function get_graphops_client at 0x000001F40D541EE0>, use_cache=True, scope=None))
-- **Success Response**: HTTP `200` $\rightarrow$ `dict`
+- **Summary / Purpose**: Executes security community detection (Enclave Modularity & Boundary Pivot Partitioning) across graph entities, identifying enterprise tiers and high-risk cross-boundary lateral movement edges. Handles empty graphs (0 clusters) and isolated nodes (`COMM-ISOLATED`).
+- **Input Schema**: `client`: `Neo4jClient` (Default: Depends(get_graphops_client))
+- **Success Response**: HTTP `200` $\rightarrow$ `CommunityDetectionResult` (`communities`, `boundary_edges`, `total_communities`, `cross_boundary_edges_count`, `modularity_score`, `execution_time_ms`, `disclaimer`)
 - **Authentication**: None (Public / Analyst)
-- **Infrastructure Dependencies**: Neo4j Bolt / Mock
-- **Frontend Trigger / View**: `/api/v1/graphops/communities`
-- **Existing Test Coverage**: `test_graphops_hackathon_enhancements.py`
-- **Verification Classification**: `UNIT TESTED`
+- **Infrastructure Dependencies**: Neo4j Bolt / In-Memory Baseline Fixture
+- **Frontend Trigger / View**: Tab 7: Security Communities (`#tab-graphops-communities`, `data-mode="communities"`) under Pillar 4
+- **Existing Test Coverage**: `test_graphops_communities_rigor.py`, `test_graphops_hackathon_enhancements.py`, `test_frontend_architecture.py`
+- **Verification Classification**: `LOCAL INTEGRATION VERIFIED`
 
 #### `GET /api/v1/graphops/incident-narrative/{case_id}`
 - **Handler**: `backend.api.graphops_routes.get_incident_narrative_endpoint`
@@ -651,14 +651,14 @@ The application enforces three distinct authentication schemes across its endpoi
 
 #### `GET /api/v1/graphops/centrality`
 - **Handler**: `backend.api.graphops_routes.get_graph_centrality_endpoint`
-- **Summary / Purpose**: Computes PageRank authority and Betweenness lateral-bridge metrics across live Neo4j topology.
-- **Input Schema**: `top_k`: `<class 'int'>` (Default: annotation=int required=False default=10 alias='top_k' description='Number of top disruption nodes to return' json_schema_extra={} metadata=[Ge(ge=1), Le(le=50)])<br>`client`: `<class 'backend.graphops.client.Neo4jClient'>` (Default: Depends(dependency=<function get_graphops_client at 0x000001F40D541EE0>, use_cache=True, scope=None))
-- **Success Response**: HTTP `200` $\rightarrow$ `dict`
+- **Summary / Purpose**: Computes PageRank authority and Brandes' Betweenness Centrality across the organizational knowledge graph. Backed by a 60-second in-memory dual-tier cache to prevent re-computation during path finding, invalidated on graph mutations.
+- **Input Schema**: `top_k`: `int` (Default: 10, range: 1..50)<br>`force_refresh`: `bool` (Default: False, forces cache bypass)<br>`client`: `Neo4jClient` (Default: Depends(get_graphops_client))
+- **Success Response**: HTTP `200` $\rightarrow$ `CentralityAnalysisResult` (`timestamp`, `total_nodes_analyzed`, `total_edges_analyzed`, `top_disruption_nodes`, `network_bridge_nodes`, `top_betweenness_node`, `top_pagerank_node`, `executive_summary`)
 - **Authentication**: None (Public / Analyst)
-- **Infrastructure Dependencies**: Neo4j Bolt / Mock
-- **Frontend Trigger / View**: `/api/v1/graphops/centrality`
-- **Existing Test Coverage**: `test_graphops_zero_trust_centrality.py`
-- **Verification Classification**: `UNIT TESTED`
+- **Infrastructure Dependencies**: Neo4j Bolt / In-Memory Mock Topology
+- **Frontend Trigger / View**: Tab 2: Attack Paths & Chokepoints (`#panel-centrality-results`, `#centrality-tbody`) under Pillar 2
+- **Existing Test Coverage**: `test_graphops_centrality_rigor.py`, `test_graphops_zero_trust_centrality.py`, `test_frontend_architecture.py`
+- **Verification Classification**: `LOCAL INTEGRATION VERIFIED`
 
 ### Governance, Compliance & Tamper-Evident Audit Endpoints (/api/v1/governance)
 

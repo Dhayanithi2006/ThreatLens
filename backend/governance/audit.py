@@ -35,8 +35,6 @@ def _compute_hash(
     details: Dict[str, Any],
     timestamp: datetime,
     previous_hash: str,
-    related_case_id: Optional[str] = None,
-    result: str = "SUCCESS",
 ) -> str:
     """Computes deterministic SHA-256 digest over audit record payload and previous hash."""
     payload = {
@@ -49,10 +47,6 @@ def _compute_hash(
         "timestamp": timestamp.isoformat(),
         "previous_hash": previous_hash,
     }
-    if related_case_id is not None:
-        payload["related_case_id"] = related_case_id
-    if result != "SUCCESS":
-        payload["result"] = result
     serialized = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -63,8 +57,6 @@ def record_audit_event(
     target_resource: str,
     action: str,
     details: Optional[Dict[str, Any]] = None,
-    related_case_id: Optional[str] = None,
-    result: str = "SUCCESS",
 ) -> AuditRecord:
     """
     Appends an immutable event to the cryptographic audit chain.
@@ -85,8 +77,6 @@ def record_audit_event(
             details=safe_details,
             timestamp=now,
             previous_hash=prev_hash,
-            related_case_id=related_case_id,
-            result=result,
         )
         
         entry = AuditRecord(
@@ -99,8 +89,6 @@ def record_audit_event(
             previous_hash=prev_hash,
             current_hash=curr_hash,
             timestamp=now,
-            related_case_id=related_case_id,
-            result=result,
         )
         _audit_ledger.append(entry)
         return copy.deepcopy(entry)
@@ -165,8 +153,6 @@ def verify_audit_integrity() -> Tuple[bool, Optional[str]]:
                 details=entry.details,
                 timestamp=entry.timestamp,
                 previous_hash=entry.previous_hash,
-                related_case_id=entry.related_case_id,
-                result=entry.result or "SUCCESS",
             )
             
             if entry.current_hash != recomputed:

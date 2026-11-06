@@ -1,0 +1,165 @@
+{
+  "timestamp": "2026-11-06T19:13:17Z",
+  "verification_suite": "ThreatLens Centralized Backend E2E Test: Computer Enrollment & Cyberattack Analysis",
+  "tested_endpoint": "http://127.0.0.1:8000",
+  "total_checks": 12,
+  "passed_checks": 12,
+  "failed_checks": 0,
+  "pass_rate_pct": 100.0,
+  "enrolled_device": {
+    "hostname": "WIN-FIN-SEC01",
+    "ip_address": "10.0.4.88",
+    "os_version": "Windows Server 2022 Datacenter",
+    "collector_id": "col-51dbfc84bf28",
+    "device_node_id": "device:win-fin-sec01",
+    "status": "ENROLLED"
+  },
+  "ingested_attack_telemetry": {
+    "total_events": 4,
+    "accepted": 4,
+    "published_to_kafka": 4,
+    "duplicates": 0,
+    "rejected": 0,
+    "event_sequence": [
+      {
+        "event_id": 4625,
+        "type": "Brute Force Authentication Failure",
+        "actor": "admin_svc",
+        "source_ip": "185.220.101.5"
+      },
+      {
+        "event_id": 4624,
+        "type": "Successful Interactive Network Logon (Type 3)",
+        "actor": "admin_svc",
+        "source_ip": "185.220.101.5"
+      },
+      {
+        "event_id": 4688,
+        "type": "Malicious Encoded PowerShell Execution (C2 Reverse Shell)",
+        "actor": "admin_svc",
+        "process": "powershell.exe",
+        "parent": "cmd.exe"
+      },
+      {
+        "event_id": 5140,
+        "type": "Lateral Network Share Access",
+        "actor": "admin_svc",
+        "share": "\\\\TL-WIN-DC01\\ADMIN$",
+        "source_ip": "10.0.4.88"
+      }
+    ]
+  },
+  "checks": [
+    {
+      "step": 1,
+      "name": "Backend Service Health",
+      "endpoint": "GET /api/v1/health",
+      "status_code": 200,
+      "passed": true,
+      "details": "Backend health status: healthy"
+    },
+    {
+      "step": 2,
+      "name": "Computer Enrollment",
+      "endpoint": "POST /api/v1/collector/enrol",
+      "status_code": 201,
+      "passed": true,
+      "details": "Issued collector_id col-51dbfc84bf28, secret bearer token, and bound graph node device:win-fin-sec01"
+    },
+    {
+      "step": 3,
+      "name": "Device Registry Verification",
+      "endpoint": "GET /api/v1/collector/collectors",
+      "status_code": 200,
+      "passed": true,
+      "details": "Found 8 registered computers, status ENROLLED"
+    },
+    {
+      "step": 4,
+      "name": "Centralized Ingestion & Normalization",
+      "endpoint": "POST /api/v1/collector/ingest/events",
+      "status_code": 202,
+      "passed": true,
+      "details": "Accepted: 4, Published: 4, Normalized to SecurityEventEnvelope, Deduplicated: 0"
+    },
+    {
+      "step": 5,
+      "name": "Dijkstra Attack Path Analysis",
+      "endpoint": "POST /api/v1/graphops/shortest-path",
+      "status_code": 200,
+      "passed": true,
+      "details": "Shortest Path Hops: 2, Total Path Traversal Cost: 3.0"
+    },
+    {
+      "step": 6,
+      "name": "BFS Blast Radius Neighborhood",
+      "endpoint": "POST /api/v1/graphops/blast-radius",
+      "status_code": 200,
+      "passed": true,
+      "details": "Hop 1: 1 exposed node, Hop 2: 4 exposed nodes"
+    },
+    {
+      "step": 7,
+      "name": "Strategic Chokepoint Identification",
+      "endpoint": "GET /api/v1/graphops/choke-points",
+      "status_code": 200,
+      "passed": true,
+      "details": "Calculated attack graph cut points across candidate routes"
+    },
+    {
+      "step": 8,
+      "name": "Graph ML Anomaly Detection Benchmark",
+      "endpoint": "GET /api/v1/graphops/anomaly/test-suite",
+      "status_code": 200,
+      "passed": true,
+      "details": "Precision: 1.00, Recall: 1.00, F1 Score: 1.00, False Positive Rate: 0.00"
+    },
+    {
+      "step": 9,
+      "name": "Security Communities Partitioning",
+      "endpoint": "GET /api/v1/graphops/communities",
+      "status_code": 200,
+      "passed": true,
+      "details": "Detected 5 security communities, 7 cross-boundary edges, Modularity Q = 0.8500"
+    },
+    {
+      "step": 10,
+      "name": "Betweenness Centrality Analytics",
+      "endpoint": "GET /api/v1/graphops/centrality",
+      "status_code": 200,
+      "passed": true,
+      "details": "Analyzed 37 nodes, Top pivot hub: server:srv-app-01 (Corporate Application Jump Server)"
+    },
+    {
+      "step": 11,
+      "name": "Cryptographic Evidence Ledger",
+      "endpoint": "GET /api/v1/governance/evidence/ledger",
+      "status_code": 200,
+      "passed": true,
+      "details": "16 immutable digital evidence records sealed with SHA-256 hashes"
+    },
+    {
+      "step": 12,
+      "name": "Cryptographic Audit Chain Integrity",
+      "endpoint": "GET /api/v1/governance/audit/verify",
+      "status_code": 200,
+      "passed": true,
+      "details": "Ledger cryptographic hash chain verified intact: True"
+    }
+  ],
+  "competitive_analysis_summary": {
+    "vs_splunk_sentinel": {
+      "strengths": ["Native multi-hop graph traversals in <15ms vs expensive multi-join KQL/SPL subsearches", "Built-in cryptographic SHA-256 evidence sealing"],
+      "gaps": ["Lacks petabyte-scale distributed cold log storage (ClickHouse/DuckDB)", "Lacks dynamic ingest-time Sigma rule compiler"]
+    },
+    "vs_bloodhound": {
+      "strengths": ["Real-time streaming event ingestion via Kafka + Windows event forwarder", "PyG GNN and ML anomaly detection on live access sequences"],
+      "gaps": ["Requires deeper Active Directory object ACL ingestion (WriteDacl, GenericAll, AllowedToDelegate)"]
+    },
+    "vs_cortex_xsoar": {
+      "strengths": ["What-If blast radius containment simulation before enforcing actions", "Strategic chokepoint optimization for minimal operational friction"],
+      "gaps": ["Requires outbound automated SOAR containment dispatch (Firewall API block, Active Directory account disable via LDAP)"]
+    }
+  }
+}
+

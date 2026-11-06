@@ -1836,6 +1836,40 @@ textarea:focus-visible {
   margin-top: 8px;
 }
 
+/* Pillar-filtered GraphOps tab hiding */
+.graphops-tab-hidden {
+  display: none !important;
+}
+
+/* Alert stream section separator & tables */
+.alerts-section-header {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+  padding: 14px 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.alerts-section-header::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* Timeline loading/empty states */
+.timeline-state-msg {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 2rem;
+  font-size: 0.85rem;
+}
+
+
 
 
 

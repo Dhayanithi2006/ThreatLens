@@ -2,7 +2,7 @@
   "model_name": "StructuralGraphSAGE",
   "model_version": "1.0.0",
   "feature_schema_version": "1.0.0",
-  "training_timestamp": "2026-11-06T10:08:57.298309+00:00",
+  "training_timestamp": "2026-11-04T18:05:11.698748+00:00",
   "graph_snapshot_id": "snap-0d117bb48c4b",
   "num_nodes": 35,
   "num_edges": 25,

@@ -40,7 +40,7 @@ class IncidentNarrativeResult(BaseModel):
     recommended_action: str
     disclaimer: str = (
         "Consolidated graph kill-chain narrative generated from correlated security telemetry; "
-        "replaces disparate relational alerts with unified graph context (Analytical Interpretation)."
+        "replaces disparate relational alerts with unified graph context."
     )
 
 
