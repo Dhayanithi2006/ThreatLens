@@ -2,14 +2,6 @@
 
 <div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Neo4j](https://img.shields.io/badge/Neo4j-5.26%2B%20Enterprise-008CC1?style=for-the-badge&logo=neo4j&logoColor=white)](https://neo4j.com/)
-[![Apache Kafka](https://img.shields.io/badge/Apache%20Kafka-3.8%2B%20Event%20Bus-231F20?style=for-the-badge&logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
-[![PyTorch Geometric](https://img.shields.io/badge/PyG-GraphSAGE%20%2F%20GNN-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch-geometric.readthedocs.io/)
-[![Governance](https://img.shields.io/badge/Standards-NIST%20CSF%202.0%20%7C%20CIS%20v8.1-10b981?style=for-the-badge&logo=shield&logoColor=white)](https://www.nist.gov/cyberframework)
-[![Cryptographic Ledger](https://img.shields.io/badge/Audit%20Ledger-SHA--256%20Chained-8b5cf6?style=for-the-badge&logo=auth0&logoColor=white)](#-module-5-reports-governance-hub--soar-guardrails)
-[![Automated Tests](https://img.shields.io/badge/Tests-158%20Passed%20(100%25)-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](#-testing--quality-assurance)
 
 **A next-generation Security Operations Center (SOC) platform replacing disconnected relational alert queues with a connected enterprise security knowledge graph, multi-hop Dijkstra attack path discovery, real-time BFS blast radius reachability, structural Graph ML, and automated SOAR containment with 1-click cryptographic rollback.**
 
@@ -320,63 +312,8 @@ CENTRALIZED BACKEND VERIFICATION RESULT: 12/12 CHECKS PASSED (100%)
   [PASS] 11. Cryptographic Evidence Ledger: Sealed records verified
   [PASS] 12. SHA-256 Audit Integrity: Ledger Cryptographic Chain Intact: True
 ======================================================================
+
 ```
-
----
-
-## 📡 REST API Reference
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/v1/health` | System health check (Neo4j, Kafka, Ingestion status). |
-| `GET` | `/api/v1/cases` | Retrieves correlated incident cases and MITRE ATT&CK mappings. |
-| `POST` | `/api/v1/analyze-email` | Uploads and parses raw `.eml` files for forensic email analysis. |
-| `GET` | `/api/v1/graphops/graph` | Returns the enterprise security graph topology for Cytoscape.js. |
-| `POST` | `/api/v1/graphops/dijkstra` | Computes Dijkstra shortest path to Crown Jewels. |
-| `POST` | `/api/v1/graphops/blast-radius` | Calculates multi-hop BFS blast radius (1-3 hops). |
-| `GET` | `/api/v1/graphops/choke-points` | Identifies strategic choke points via Betweenness Centrality. |
-| `POST` | `/api/v1/graphops/simulate` | Simulates containment actions against in-memory graph projection. |
-| `POST` | `/api/v1/collector/enroll` | Enrolls a new Windows endpoint and provisions HMAC token. |
-| `POST` | `/api/v1/collector/events` | Ingests authenticated Windows Security Event batches. |
-| `POST` | `/api/v1/remediations/enforce` | Dispatches live SOAR containment (Firewall, AD, Host). |
-| `POST` | `/api/v1/remediations/{id}/rollback` | Executes 1-click rollback restoring contained assets. |
-| `GET` | `/api/v1/governance/ledger/verify` | Verifies tamper-evident SHA-256 cryptographic audit chain. |
-
----
-
-## 📁 Repository Directory Structure
-
-```plaintext
-ThreatLens/
-├── backend/
-│   ├── api/                     # FastAPI route handlers
-│   │   ├── routes.py            # Email forensics & threat triage routes
-│   │   ├── graphops_routes.py   # Knowledge graph analytics & simulation routes
-│   │   ├── collector_routes.py  # Remote endpoint enrollment & log ingestion
-│   │   └── governance_routes.py # Compliance, audit ledger & SOAR endpoints
-│   ├── collector/               # Collector server-side registry & normalizer
-│   ├── core/                    # App configuration, security settings, CORS
-│   ├── governance/              # NIST/CIS compliance evaluator & SHA-256 ledger
-│   ├── graphops/                # Dijkstra, BFS, Centrality, GNN & Kafka workers
-│   ├── models/                  # Pydantic data schemas & Neo4j models
-│   ├── services/                # Email heuristics, IOC extractors, XAI
-│   └── soar/                    # Containment adapters, dispatcher, rollback
-├── collector/                   # Standalone Windows Endpoint Agent
-│   ├── threatlens_collector.py  # Agent executable (DPAPI, wevtutil, spooling)
-│   └── INSTALL.md               # Windows Administrator deployment guide
-├── deploy/                      # Deployment manifests & Docker configurations
-├── docs/                        # Comprehensive architectural & compliance specs
-├── frontend/                    # Zero-dependency Dark SOC Web Application
-│   ├── css/                     # Modern Dark SOC styling & typography
-│   ├── js/                      # App controller, Cytoscape renderer, routing
-│   └── index.html               # Single-Page SOC Console
-├── tests/                       # 45+ automated pytest test suites
-├── docker-compose.yml           # Multi-container orchestration (Neo4j, Kafka)
-├── requirements.txt             # Python dependencies
-└── run.py                       # Server launcher
-```
-
----
 
 ## 🔒 Security & Operational Best Practices
 
