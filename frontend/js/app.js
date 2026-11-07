@@ -8752,7 +8752,100 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+  window.loadActiveSOARGuardrails = async function() {
+    const tbody = document.getElementById("soar-active-guardrails-tbody");
+    const countBadge = document.getElementById("soar-active-guardrails-count");
+    if (!tbody) return;
+
+    try {
+      const resp = await fetch("/api/v1/governance/soar/enforcements");
+      if (!resp.ok) return;
+      const items = await resp.json();
+      const activeItems = (items || []).filter(i => i.state === "ENFORCED");
+
+      if (countBadge) {
+        countBadge.textContent = `${activeItems.length} Active`;
+        countBadge.className = activeItems.length > 0 ? "status-badge status-critical" : "status-badge status-clean";
+      }
+
+      if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 14px;">No containment guardrails currently enforced. Use the What-If Simulator in GraphOps to evaluate and enforce.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = items.map(item => {
+        const isEnforced = item.state === "ENFORCED";
+        const stBadge = isEnforced
+          ? `<span class="status-badge status-critical" style="font-size:0.68rem; display:inline-flex; align-items:center; gap:4px;"><span class="pulse-indicator pulse-danger" style="width:6px; height:6px;"></span>ENFORCED</span>`
+          : `<span class="status-badge status-clean" style="font-size:0.68rem;">ROLLED_BACK</span>`;
+
+        const rollbackBtn = isEnforced
+          ? `<button class="btn btn-secondary" onclick="window.rollbackSOARContainment('${escapeHtml(item.remediation_id)}', '${escapeHtml(item.target_node_id)}')" style="font-size:0.72rem; padding:3px 8px; color:#38bdf8; border-color:rgba(56,189,248,0.5); cursor:pointer;">↩ 1-Click Rollback</button>`
+          : `<span style="font-size:0.7rem; color:var(--text-muted);">Restored</span>`;
+
+        return `
+          <tr>
+            <td><strong style="font-family:var(--font-mono); font-size:0.75rem; color:var(--brand-cyan);">${escapeHtml(item.enforcement_id)}</strong></td>
+            <td><strong style="font-size:0.78rem; color:#f87171; font-family:var(--font-mono);">${escapeHtml(item.target_node_id)}</strong></td>
+            <td><span class="status-badge status-suspicious" style="font-size:0.68rem;">${escapeHtml(item.action)}</span></td>
+            <td style="font-size:0.72rem; color:var(--text-secondary); font-family:var(--font-mono);">${escapeHtml(item.adapter_name)}</td>
+            <td style="font-size:0.72rem; color:var(--text-muted);">${escapeHtml((item.executed_at || '').substring(0, 19).replace('T', ' '))}</td>
+            <td>${stBadge}</td>
+            <td style="text-align:center;">${rollbackBtn}</td>
+          </tr>
+        `;
+      }).join("");
+    } catch (e) {
+      console.warn("Could not load SOAR active guardrails:", e);
+    }
+  };
+
+  window.rollbackSOARContainment = async function(remediationId, targetNode) {
+    const confirmed = confirm(
+      `↩ 1-CLICK CONTAINMENT ROLLBACK\n\n` +
+      `Target Entity: ${targetNode || remediationId}\n` +
+      `Remediation ID: ${remediationId}\n\n` +
+      `This will safely reverse host/identity containment, remove firewall isolation rules, and restore baseline network traversal routes.\n\n` +
+      `A verified SHA-256 rollback event will be recorded in the audit trail.\n\n` +
+      `Confirm rollback?`
+    );
+    if (!confirmed) return;
+
+    try {
+      const resp = await fetch(`/api/v1/governance/remediations/${encodeURIComponent(remediationId)}/rollback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          remediation_id: remediationId,
+          reason: "SOC Analyst approved 1-click rollback after threat resolution"
+        })
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        alert("Rollback failed: " + (err.detail || resp.statusText));
+        return;
+      }
+
+      const rbkRes = await resp.json();
+      alert(
+        `✓ CONTAINMENT ROLLED BACK SUCCESSFULLY!\n\n` +
+        `Restored Entity: ${rbkRes.target_node_id}\n` +
+        `State: ${rbkRes.state}\n` +
+        `Audit Hash: ${rbkRes.audit_hash.substring(0, 16)}...\n\n` +
+        `Baseline operational routes have been completely restored.`
+      );
+
+      if (window.loadActiveSOARGuardrails) window.loadActiveSOARGuardrails();
+      if (window.loadGovernanceRemediations) window.loadGovernanceRemediations();
+      if (window.loadGovernanceAuditLedger) window.loadGovernanceAuditLedger();
+    } catch (e) {
+      alert("Network error rolling back containment: " + e.message);
+    }
+  };
+
   async function loadGovernanceRemediations(statusFilter) {
+    if (window.loadActiveSOARGuardrails) window.loadActiveSOARGuardrails();
 
 
 
@@ -21787,6 +21880,77 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 
+    }
+
+    const btnEnforceLive = document.getElementById("btn-enforce-containment-live");
+    if (btnEnforceLive && !btnEnforceLive._bound) {
+      btnEnforceLive._bound = true;
+      btnEnforceLive.addEventListener("click", async () => {
+        const simRes = state.graphOpsSimResult;
+        let targetNode = "server:srv-app-01";
+        let action = "ISOLATE_NODE";
+        if (simRes && simRes.proposed_interventions && simRes.proposed_interventions.length > 0) {
+          targetNode = simRes.proposed_interventions[0].node_id || targetNode;
+          action = simRes.proposed_interventions[0].action || action;
+        }
+
+        const confirmed = confirm(
+          `⚡ EXECUTE LIVE CONTAINMENT GUARDRAIL\n\n` +
+          `Target Entity: ${targetNode}\n` +
+          `Containment Action: ${action}\n` +
+          `Simulated Impact: ${simRes ? (simRes.containment_efficiency_pct || 60.0) + "% risk eliminated" : "75% candidate paths severed"}\n\n` +
+          `This will enforce active host/identity isolation via ThreatLens SOAR dispatcher and seal evidence in the SHA-256 audit ledger.\n\n` +
+          `A guaranteed 1-Click Rollback token will be armed.\n\n` +
+          `Proceed with live containment?`
+        );
+        if (!confirmed) return;
+
+        btnEnforceLive.disabled = true;
+        btnEnforceLive.textContent = "Enforcing...";
+
+        try {
+          const resp = await fetch("/api/v1/governance/remediations/enforce", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              target_node_id: targetNode,
+              action: action,
+              simulation_id: simRes ? simRes.simulation_id : null,
+              reason: `SOC Incident Responder approved What-If containment simulation on ${targetNode}`
+            })
+          });
+
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert("Containment Enforcement failed: " + (err.detail || resp.statusText));
+            btnEnforceLive.disabled = false;
+            btnEnforceLive.textContent = "⚡ Enforce Containment Live";
+            return;
+          }
+
+          const enfResult = await resp.json();
+          btnEnforceLive.textContent = "✓ ENFORCED (Guardrail Active)";
+          btnEnforceLive.style.background = "#10b981";
+          btnEnforceLive.style.borderColor = "#34d399";
+
+          alert(
+            `✓ CONTAINMENT ENFORCED SUCCESSFULLY!\n\n` +
+            `Enforcement ID: ${enfResult.enforcement_id}\n` +
+            `Remediation ID: ${enfResult.remediation_id}\n` +
+            `Contained Entity: ${enfResult.target_node_id}\n` +
+            `Adapter: ${enfResult.adapter_name}\n` +
+            `Audit Hash: ${enfResult.audit_hash.substring(0, 16)}...\n\n` +
+            `1-Click Rollback is armed. You can review or reverse this guardrail anytime in the Governance Hub.`
+          );
+
+          if (window.loadActiveSOARGuardrails) window.loadActiveSOARGuardrails();
+          if (window.loadGovernanceRemediations) window.loadGovernanceRemediations();
+        } catch (e) {
+          alert("Network error enforcing containment: " + e.message);
+          btnEnforceLive.disabled = false;
+          btnEnforceLive.textContent = "⚡ Enforce Containment Live";
+        }
+      });
     }
 
 

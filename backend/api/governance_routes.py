@@ -48,6 +48,15 @@ from backend.governance.audit import (
     update_remediation_status,
     verify_audit_integrity,
 )
+from backend.soar import (
+    EnforcementAction,
+    EnforceContainmentRequest,
+    EnforceContainmentResult,
+    RollbackRequest,
+    RollbackResult,
+    ActiveEnforcementSummary,
+    get_soar_dispatcher,
+)
 
 router = APIRouter(prefix="/api/v1/governance", tags=["governance"])
 
@@ -425,3 +434,133 @@ async def verify_evidence_hash(payload: VerifyEvidenceRequest):
             detail=res.get("detail", "Evidence not found."),
         )
     return res
+
+
+# =============================================================================
+# 7. Closed-Loop SOAR Containment & Reversible Rollback Endpoints
+# =============================================================================
+
+@router.post(
+    "/remediations/enforce",
+    response_model=EnforceContainmentResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enforce Active Containment Guardrail",
+    description="Actively executes containment intervention (host isolation, account suspension, edge severance) with pre-state preservation and cryptographic audit ledger sealing.",
+)
+async def enforce_containment_endpoint(
+    payload: EnforceContainmentRequest,
+    actor: str = Depends(get_actor_identity),
+) -> EnforceContainmentResult:
+    """Enforces active network or identity containment on designated target entity."""
+    dispatcher = get_soar_dispatcher()
+    try:
+        return dispatcher.enforce_containment(payload, actor=actor)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SOAR Containment enforcement error: {str(e)}",
+        )
+
+
+@router.post(
+    "/remediations/{remediation_id}/enforce",
+    response_model=EnforceContainmentResult,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enforce Containment on Existing Remediation Record",
+)
+async def enforce_remediation_by_id_endpoint(
+    remediation_id: str,
+    action: Optional[EnforcementAction] = Query(EnforcementAction.ISOLATE_NODE),
+    actor: str = Depends(get_actor_identity),
+) -> EnforceContainmentResult:
+    """Dispatches active containment for an existing open remediation record."""
+    rec = get_remediation(remediation_id)
+    if not rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Remediation record '{remediation_id}' not found.",
+        )
+    target_id = rec.finding_reference
+    if ":" in target_id and not target_id.startswith("http"):
+        # e.g. server:srv-app-01
+        target_entity = target_id.split()[-1]
+    else:
+        target_entity = target_id
+
+    req_payload = EnforceContainmentRequest(
+        target_node_id=target_entity,
+        action=action or EnforcementAction.ISOLATE_NODE,
+        remediation_id=rec.remediation_id,
+        reason=f"Enforcing remediation for {rec.recommended_action}",
+    )
+    dispatcher = get_soar_dispatcher()
+    try:
+        return dispatcher.enforce_containment(req_payload, actor=actor)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SOAR Containment enforcement error: {str(e)}",
+        )
+
+
+@router.post(
+    "/remediations/{remediation_id}/rollback",
+    response_model=RollbackResult,
+    summary="Rollback Active Containment (1-Click Reversal)",
+    description="Deterministically reverses an active containment intervention, restoring previous network and graph states.",
+)
+async def rollback_containment_endpoint(
+    remediation_id: str,
+    payload: Optional[RollbackRequest] = None,
+    actor: str = Depends(get_actor_identity),
+) -> RollbackResult:
+    """Safely reverses containment and restores baseline operational state."""
+    dispatcher = get_soar_dispatcher()
+    rbk_req = payload or RollbackRequest(remediation_id=remediation_id)
+    rbk_req.remediation_id = remediation_id
+    try:
+        return dispatcher.rollback_containment(rbk_req, actor=actor)
+    except ValueError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(ve),
+        )
+    except PermissionError as pe:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(pe),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"SOAR Containment rollback error: {str(e)}",
+        )
+
+
+@router.get(
+    "/soar/enforcements",
+    response_model=List[ActiveEnforcementSummary],
+    summary="List Active Containment Guardrails",
+    description="Returns all containment guardrails currently enforced across the infrastructure.",
+)
+async def list_active_enforcements_endpoint() -> List[ActiveEnforcementSummary]:
+    """Retrieves all active SOAR containment guardrails."""
+    dispatcher = get_soar_dispatcher()
+    return dispatcher.list_active_enforcements()
+
+
+@router.get(
+    "/soar/enforcements/{identifier}",
+    response_model=EnforceContainmentResult,
+    summary="Get Containment Enforcement Details",
+)
+async def get_enforcement_details_endpoint(identifier: str) -> EnforceContainmentResult:
+    """Retrieves detailed containment record including pre-state snapshot and audit hash."""
+    dispatcher = get_soar_dispatcher()
+    enf = dispatcher.get_enforcement(identifier)
+    if not enf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Containment enforcement '{identifier}' not found.",
+        )
+    return enf
